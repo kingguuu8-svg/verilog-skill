@@ -28,6 +28,16 @@ BACKEND_SPECS = {
         "version_args": ["--version"],
         "language_mode_default": "1800-2017 parser",
     },
+    "verible-lint": {
+        "env_var": "VERIBLE_VERILOG_LINT_BIN",
+        "executable": "verible-verilog-lint",
+        "local_candidates": [
+            "tools/verible/current/verible-verilog-lint.exe",
+            "tools/verible/current/verible-verilog-lint",
+        ],
+        "version_args": ["--version"],
+        "language_mode_default": "1800-2017 lint",
+    },
 }
 
 
@@ -35,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Probe syntax checker backends")
     parser.add_argument(
         "--backend",
-        choices=["all", "iverilog", "verible"],
+        choices=["all", "iverilog", "verible", "verible-lint"],
         default="all",
         help="Which backend to probe",
     )

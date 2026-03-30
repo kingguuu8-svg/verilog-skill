@@ -31,6 +31,7 @@ Current environment variables:
 
 - `IVERILOG_BIN`
 - `VERIBLE_VERILOG_SYNTAX_BIN`
+- `VERIBLE_VERILOG_LINT_BIN`
 
 Current repo-local tool location:
 
@@ -50,6 +51,12 @@ Run syntax/elaboration checking:
 python scripts/check_syntax.py <inputs...>
 ```
 
+Run next-layer lint checking:
+
+```bash
+python scripts/check_lint.py <inputs...>
+```
+
 Run the built-in fixture validation:
 
 ```bash
@@ -67,6 +74,18 @@ python scripts/validate_skill.py
   `--define`
   `--top`
   `--syntax-backend auto|verible|iverilog`
+
+Lint inputs:
+
+- `.v`
+- `.sv`
+- `.f` files that resolve to `.v/.sv`
+
+Lint options:
+
+- `--rules`
+- `--ruleset`
+- `--waiver-file`
 
 ## Output Model
 
@@ -91,6 +110,10 @@ Each stage result contains:
 - `stderr`
 - `locations`
 
+The lint wrapper returns the same top-level shape, but with:
+
+- `checks.lint`
+
 ## Fallback Behavior
 
 - if Verible is unavailable in `auto` mode, the checker falls back to Icarus and reports that fallback in `checks.syntax`
@@ -98,9 +121,17 @@ Each stage result contains:
 - if Verible syntax fails, the checker stops before elaboration
 - if Verible passes but Icarus later fails, the failure is treated as an elaboration/backend limitation path rather than a primary syntax-parser failure
 
+Lint behavior:
+
+- lint uses `verible-verilog-lint`
+- lint is source-level only in stage 1
+- lint does not replace syntax/elaboration
+- lint currently does not apply include-dir or define preprocessing
+
 ## Current Limits
 
 - no full lint stage
+- only a minimal next-layer lint wrapper
 - no simulation execution
 - no waveform support
 - no UVM verification flow

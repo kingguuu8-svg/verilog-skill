@@ -12,6 +12,7 @@ from probe_backend import probe_backend
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CHECK_SCRIPT = SCRIPT_DIR / "check_syntax.py"
+LINT_SCRIPT = SCRIPT_DIR / "check_lint.py"
 FIXTURES_DIR = SCRIPT_DIR.parent / "fixtures"
 
 
@@ -50,8 +51,35 @@ def run_case(name: str, args: list[str], expected_status: str, expected_category
         raise AssertionError(f"{name}: missing elaboration locations field")
 
 
+def run_lint_case(name: str, args: list[str], expected_status: str, expected_category: str) -> None:
+    proc = subprocess.run(
+        [sys.executable, str(LINT_SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+        check=False,
+    )
+    if not proc.stdout.strip():
+        raise AssertionError(f"{name}: lint checker produced no JSON output")
+
+    payload = json.loads(proc.stdout)
+    if payload["status"] != expected_status:
+        raise AssertionError(f"{name}: expected status {expected_status}, got {payload['status']}")
+
+    lint = payload["checks"]["lint"]
+    if lint is None:
+        raise AssertionError(f"{name}: missing checks.lint")
+    if lint["category"] != expected_category:
+        raise AssertionError(f"{name}: expected category {expected_category}, got {lint['category']}")
+    if "locations" not in lint:
+        raise AssertionError(f"{name}: missing lint locations field")
+    if "support_range" not in payload:
+        raise AssertionError(f"{name}: missing support_range")
+
+
 def main() -> int:
     verible_available = probe_backend("verible")["status"] == "ok"
+    verible_lint_available = probe_backend("verible-lint")["status"] == "ok"
 
     run_case(
         "pass_verilog_2005",
@@ -150,6 +178,38 @@ def main() -> int:
             [str(FIXTURES_DIR / "pass_simple.sv"), "--syntax-backend", "auto"],
             "ok",
             "syntax_backend_fallback",
+        )
+
+    if verible_lint_available:
+        run_lint_case(
+            "lint_pass_sv_subset",
+            [str(FIXTURES_DIR / "pass_simple.sv")],
+            "ok",
+            "lint_ok",
+        )
+        run_lint_case(
+            "lint_pass_command_file",
+            [str(FIXTURES_DIR / "pass_simple.f")],
+            "ok",
+            "lint_ok",
+        )
+        run_lint_case(
+            "lint_fail_rule_violation",
+            [str(FIXTURES_DIR / "lint_fail_always_ff.sv")],
+            "lint_error",
+            "lint_violation",
+        )
+        run_lint_case(
+            "lint_fail_syntax",
+            [str(FIXTURES_DIR / "fail_syntax.sv")],
+            "syntax_error",
+            "syntax_error",
+        )
+        run_lint_case(
+            "lint_unsupported_include_shape",
+            [str(FIXTURES_DIR / "pass_with_include.f")],
+            "unsupported_feature",
+            "unsupported_feature",
         )
     print("validation_ok")
     return 0

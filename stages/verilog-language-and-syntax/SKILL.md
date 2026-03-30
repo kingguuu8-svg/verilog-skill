@@ -80,11 +80,13 @@ Use them to decide whether the task is primarily:
 
 Read [references/syntax-checker-contract.md](references/syntax-checker-contract.md) before changing checker behavior or interpreting checker output.
 Read [references/checker-usage.md](references/checker-usage.md) for the supported command-line surface and output model.
+Read [references/lint-checker-contract.md](references/lint-checker-contract.md) when extending or interpreting the optional lint layer.
 
 Use the scripts in [scripts/](scripts/) for executable stage-1 checking:
 
 - `scripts/probe_backend.py`
 - `scripts/check_syntax.py`
+- `scripts/check_lint.py`
 - `scripts/validate_skill.py`
 
 ## Generation Rules
@@ -123,6 +125,11 @@ Default behavior:
 - `auto`: use Verible first when available and input shape is supported
 - otherwise fall back to Icarus-only syntax plus elaboration
 
+Optional next layer:
+
+- `verible-verilog-lint` for source-level lint diagnostics
+- use it after syntax/elaboration when you need style or structural rule checks
+
 Do not silently widen the language contract just because one stronger backend accepts a construct.
 
 ## Resource Layout
@@ -131,7 +138,7 @@ Keep this skill organized as:
 
 - `SKILL.md`: trigger conditions and execution workflow
 - `references/`: longer supporting documents loaded only when needed
-- `scripts/`: executable checker dispatcher, probes, and validation
+- `scripts/`: executable checker dispatcher, lint wrapper, probes, and validation
 - `fixtures/`: minimal input cases for checker validation
 
 ## Output Expectation
@@ -144,3 +151,4 @@ When using this skill, produce conclusions in this order:
 4. what checker/backend consequence follows
 5. support-range note and error location details when failures occur
 6. per-stage results for `checks.syntax` and `checks.elaboration`
+7. lint-stage result when the optional next layer is used
