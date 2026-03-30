@@ -1,0 +1,1 @@
+`define AND_OP &
