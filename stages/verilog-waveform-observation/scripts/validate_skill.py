@@ -205,6 +205,12 @@ def main() -> int:
         ]
     )
     session_id = session_payload["session_id"]
+    session_file = Path(session_payload["session_file"])
+    if not session_file.exists():
+        raise AssertionError("Session open did not materialize the session file")
+    stored_session = json.loads(session_file.read_text(encoding="utf-8"))
+    if "events_by_code" in stored_session:
+        raise AssertionError("Session storage regressed to embedding waveform events")
     moved_payload = run_json(
         [
             sys.executable,

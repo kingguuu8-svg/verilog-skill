@@ -59,14 +59,24 @@ def parse_set_command(command_text: str) -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     signal_tokens = normalize_signal_tokens(args.signals)
-    session, error = load_waveform_selection(args.wave_file, signal_tokens, args.window, args.anchor)
+    session, error = load_waveform_selection(
+        args.wave_file,
+        signal_tokens,
+        args.window,
+        args.anchor,
+        include_events=False,
+    )
     if error is not None:
         print(error["message"])
         return 1
 
     session_id = allocate_session_id()
     save_session(session_id, session)
-    payload = make_render_payload(session, "Waveform observation session opened")
+    payload, render_error = make_render_payload(session, "Waveform observation session opened")
+    if render_error is not None:
+        print(render_error["message"])
+        delete_session(session_id)
+        return 1
     payload["session_id"] = session_id
     print_render(payload)
     print(HELP_TEXT)
@@ -88,7 +98,10 @@ def main() -> int:
             print(HELP_TEXT)
             continue
         if raw_command == "show":
-            payload = make_render_payload(session, "Waveform window rendered")
+            payload, render_error = make_render_payload(session, "Waveform window rendered")
+            if render_error is not None:
+                print(render_error["message"])
+                continue
             payload["session_id"] = session_id
             print_render(payload)
             continue
@@ -122,13 +135,17 @@ def main() -> int:
                     signal_tokens,
                     parsed.window,
                     parsed.anchor,
+                    include_events=False,
                 )
                 if refresh_error is not None:
                     print(refresh_error["message"])
                     continue
             session = refreshed
             save_session(session_id, session)
-            payload = make_render_payload(session, "Waveform observation session updated")
+            payload, render_error = make_render_payload(session, "Waveform observation session updated")
+            if render_error is not None:
+                print(render_error["message"])
+                continue
             payload["session_id"] = session_id
             print_render(payload)
             continue
@@ -149,7 +166,10 @@ def main() -> int:
             continue
         session["anchor_ticks"] = int(next_anchor)
         save_session(session_id, session)
-        payload = make_render_payload(session, "Waveform anchor moved to the next requested event")
+        payload, render_error = make_render_payload(session, "Waveform anchor moved to the next requested event")
+        if render_error is not None:
+            print(render_error["message"])
+            continue
         payload["session_id"] = session_id
         print_render(payload)
 

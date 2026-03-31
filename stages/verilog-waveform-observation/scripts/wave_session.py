@@ -69,13 +69,22 @@ def main() -> int:
 
     if args.command == "open":
         signal_tokens = normalize_signal_tokens(args.signals)
-        session, error = load_waveform_selection(args.wave_file, signal_tokens, args.window, args.anchor)
+        session, error = load_waveform_selection(
+            args.wave_file,
+            signal_tokens,
+            args.window,
+            args.anchor,
+            include_events=False,
+        )
         if error is not None:
             print(json.dumps(error, indent=2))
             return 1
         session_id = allocate_session_id()
         path = save_session(session_id, session)
-        payload = make_render_payload(session, "Waveform observation session opened")
+        payload, render_error = make_render_payload(session, "Waveform observation session opened")
+        if render_error is not None:
+            print(json.dumps(render_error, indent=2))
+            return 1
         payload["session_id"] = session_id
         payload["session_file"] = str(path)
         print_payload(payload, args.format)
@@ -91,7 +100,10 @@ def main() -> int:
         return 1
 
     if args.command == "render":
-        payload = make_render_payload(session, "Waveform window rendered")
+        payload, render_error = make_render_payload(session, "Waveform window rendered")
+        if render_error is not None:
+            print(json.dumps(render_error, indent=2))
+            return 1
         payload["session_id"] = args.session_id
         print_payload(payload, args.format)
         return 0
@@ -103,7 +115,10 @@ def main() -> int:
             return 1
         session["anchor_ticks"] = int(next_anchor)
         save_session(args.session_id, session)
-        payload = make_render_payload(session, "Waveform anchor moved to the next requested event")
+        payload, render_error = make_render_payload(session, "Waveform anchor moved to the next requested event")
+        if render_error is not None:
+            print(json.dumps(render_error, indent=2))
+            return 1
         payload["session_id"] = args.session_id
         print_payload(payload, args.format)
         return 0
@@ -129,12 +144,21 @@ def main() -> int:
         session["anchor_ticks"] = int(parsed_anchor)
         refreshed = session
     else:
-        refreshed, refresh_error = load_waveform_selection(session["wave_file"], signal_tokens, args.window, anchor_text)
+        refreshed, refresh_error = load_waveform_selection(
+            session["wave_file"],
+            signal_tokens,
+            args.window,
+            anchor_text,
+            include_events=False,
+        )
         if refresh_error is not None:
             print(json.dumps(refresh_error, indent=2))
             return 1
     save_session(args.session_id, refreshed)
-    payload = make_render_payload(refreshed, "Waveform observation session updated")
+    payload, render_error = make_render_payload(refreshed, "Waveform observation session updated")
+    if render_error is not None:
+        print(json.dumps(render_error, indent=2))
+        return 1
     payload["session_id"] = args.session_id
     print_payload(payload, args.format)
     return 0

@@ -55,13 +55,17 @@ def main() -> int:
         signal_tokens,
         args.window,
         args.anchor,
+        include_events=True,
         stop_after_window=True,
     )
     if error is not None:
         print(json.dumps(error, indent=2))
         return 1
 
-    payload = make_render_payload(session, "Waveform window rendered")
+    payload, render_error = make_render_payload(session, "Waveform window rendered")
+    if render_error is not None:
+        print(json.dumps(render_error, indent=2))
+        return 1
     print_payload(payload, args.format)
     return 0
 

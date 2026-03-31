@@ -1012,6 +1012,7 @@ def load_waveform_selection(
     window_text: str,
     anchor_text: str | None,
     *,
+    include_events: bool = True,
     stop_after_window: bool = False,
 ) -> tuple[dict | None, dict | None]:
     wave_source, wave_error = resolve_wave_source(wave_file_text)
@@ -1045,6 +1046,20 @@ def load_waveform_selection(
         anchor_ticks = int(parsed_anchor)
 
     selected_dicts = [asdict(item) for item in selected_signals]
+    session = {
+        "wave_file": wave_source.requested_wave_file,
+        "resolved_wave_file": wave_source.resolved_wave_file,
+        "wave_source": build_wave_source_payload(wave_source),
+        "timescale_text": header["timescale_text"],
+        "timescale_fs": int(header["timescale_fs"]),
+        "selected_signals": selected_dicts,
+        "anchor_ticks": anchor_ticks,
+        "window_ticks": int(window_ticks),
+        "session_storage": "metadata_only",
+    }
+    if not include_events:
+        return session, None
+
     selected_codes = {item["code"] for item in selected_dicts}
     stop_after_ticks = anchor_ticks + int(window_ticks) if stop_after_window else None
     try:
@@ -1065,22 +1080,61 @@ def load_waveform_selection(
             },
         )
 
-    session = {
-        "wave_file": wave_source.requested_wave_file,
-        "resolved_wave_file": wave_source.resolved_wave_file,
-        "wave_source": build_wave_source_payload(wave_source),
-        "timescale_text": header["timescale_text"],
-        "timescale_fs": int(header["timescale_fs"]),
-        "selected_signals": selected_dicts,
-        "events_by_code": events_by_code,
-        "anchor_ticks": anchor_ticks,
-        "window_ticks": int(window_ticks),
-    }
+    session["events_by_code"] = events_by_code
+    session["session_storage"] = "embedded_events"
     return session, None
 
 
-def make_render_payload(session: dict, message: str) -> dict:
-    rendered = render_window(session)
+def hydrate_session_events(
+    session: dict,
+    *,
+    stop_after_window: bool,
+    selected_codes: set[str] | None = None,
+) -> tuple[dict | None, dict | None]:
+    if "events_by_code" in session and selected_codes is None:
+        return session, None
+
+    if selected_codes is None:
+        selected_codes = {item["code"] for item in session["selected_signals"]}
+
+    resolved_wave_file = Path(session.get("resolved_wave_file", session["wave_file"]))
+    stop_after_ticks = None
+    if stop_after_window:
+        stop_after_ticks = int(session["anchor_ticks"]) + int(session["window_ticks"])
+    code_to_decl = {
+        item["code"]: {"width": int(item["base_width"])}
+        for item in session["selected_signals"]
+        if item["code"] in selected_codes
+    }
+
+    try:
+        events_by_code = parse_selected_events(
+            resolved_wave_file,
+            selected_codes,
+            code_to_decl,
+            stop_after_ticks=stop_after_ticks,
+        )
+    except OSError as exc:
+        return None, make_error_payload(
+            status="input_error",
+            category="wave_file_read_failed",
+            message="Waveform events could not be read",
+            details={
+                "wave_file": str(resolved_wave_file),
+                "reason": str(exc),
+            },
+        )
+
+    hydrated = dict(session)
+    hydrated["events_by_code"] = events_by_code
+    return hydrated, None
+
+
+def make_render_payload(session: dict, message: str) -> tuple[dict | None, dict | None]:
+    render_session, render_error = hydrate_session_events(session, stop_after_window=True)
+    if render_error is not None:
+        return None, render_error
+    rendered = render_window(render_session)
     rows = rendered["rows"]
     return {
         "status": "ok",
@@ -1101,7 +1155,7 @@ def make_render_payload(session: dict, message: str) -> dict:
         "selected_signals": [item["display_name"] for item in session["selected_signals"]],
         "render": rendered,
         "rendered_text": render_rows_as_text(rows),
-    }
+    }, None
 
 
 def find_next_event(session: dict, signal_name: str, edge: str) -> tuple[int | None, dict | None]:
@@ -1127,23 +1181,76 @@ def find_next_event(session: dict, signal_name: str, edge: str) -> tuple[int | N
         )
 
     anchor_ticks = int(session["anchor_ticks"])
-    default_value = unknown_value(int(target["base_width"]))
-    current_raw, start_index = anchor_state_for_events(
-        session["events_by_code"][target["code"]],
-        anchor_ticks,
-        default_value,
-    )
-    current_value = observed_value(current_raw, target)
+    if "events_by_code" in session:
+        default_value = unknown_value(int(target["base_width"]))
+        current_raw, start_index = anchor_state_for_events(
+            session["events_by_code"][target["code"]],
+            anchor_ticks,
+            default_value,
+        )
+        current_value = observed_value(current_raw, target)
 
-    for time_tick, raw_value in session["events_by_code"][target["code"]][start_index:]:
-        time_tick = int(time_tick)
-        next_value = observed_value(str(raw_value), target)
-        transition = classify_transition(current_value, next_value, int(target["width"]))
-        if edge == "change" and next_value != current_value:
-            return time_tick, None
-        if transition == edge:
-            return time_tick, None
-        current_value = next_value
+        for time_tick, raw_value in session["events_by_code"][target["code"]][start_index:]:
+            time_tick = int(time_tick)
+            next_value = observed_value(str(raw_value), target)
+            transition = classify_transition(current_value, next_value, int(target["width"]))
+            if edge == "change" and next_value != current_value:
+                return time_tick, None
+            if transition == edge:
+                return time_tick, None
+            current_value = next_value
+    else:
+        resolved_wave_file = Path(session.get("resolved_wave_file", session["wave_file"]))
+        default_value = unknown_value(int(target["base_width"]))
+        current_raw = default_value
+        header_done = False
+        current_time = 0
+
+        try:
+            with resolved_wave_file.open("r", encoding="utf-8", errors="replace") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if not header_done:
+                        if line.startswith("$enddefinitions"):
+                            header_done = True
+                        continue
+                    if line.startswith("#"):
+                        current_time = int(line[1:])
+                        continue
+                    if line.startswith("$"):
+                        continue
+                    parsed = parse_value_change_line(line)
+                    if parsed is None:
+                        continue
+                    code, raw_value = parsed
+                    if code != target["code"]:
+                        continue
+                    normalized = normalize_vector_value(raw_value, int(target["base_width"]))
+                    if normalized == current_raw:
+                        continue
+                    if current_time <= anchor_ticks:
+                        current_raw = normalized
+                        continue
+                    current_value = observed_value(current_raw, target)
+                    next_value = observed_value(normalized, target)
+                    transition = classify_transition(current_value, next_value, int(target["width"]))
+                    if edge == "change" and next_value != current_value:
+                        return current_time, None
+                    if transition == edge:
+                        return current_time, None
+                    current_raw = normalized
+        except OSError as exc:
+            return None, make_error_payload(
+                status="input_error",
+                category="wave_file_read_failed",
+                message="Waveform events could not be read",
+                details={
+                    "wave_file": str(resolved_wave_file),
+                    "reason": str(exc),
+                },
+            )
 
     return None, make_error_payload(
         status="input_error",
@@ -1168,6 +1275,8 @@ def session_path(session_id: str) -> Path:
 def save_session(session_id: str, session: dict) -> Path:
     path = session_path(session_id)
     payload = dict(session)
+    payload.pop("events_by_code", None)
+    payload["session_storage"] = "metadata_only"
     payload["session_id"] = session_id
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
