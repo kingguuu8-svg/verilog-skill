@@ -4,7 +4,7 @@
 
 Define the language scope for the first public version of this skill.
 
-This skill is for open-source Verilog/SystemVerilog projects used by humans, not an internal helper for Codex itself.
+This skill is for open-source Verilog/SystemVerilog projects and should be described in project terms rather than tool-specific terms.
 
 The current milestone is:
 

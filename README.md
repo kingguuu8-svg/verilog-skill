@@ -14,7 +14,14 @@ The first stage is language-first:
 ## Project Position
 
 This project is for human users working on open-source HDL projects.
-It is not an internal Codex-only helper.
+It is intended to be reusable across open-source HDL workflows.
+
+Author note:
+
+- the author is a student rather than a frontline development engineer
+- this repository reflects personal usage experience and practical notes
+- frontline users are welcome to adopt, revise, or adapt it for real project needs
+- change requests or suggestions can be sent to `kingguuu8gmail.com`
 
 The project principle is:
 

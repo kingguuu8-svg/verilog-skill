@@ -1,6 +1,6 @@
 ---
 name: verilog-simulation-execution
-description: Execute stage-2 Verilog/SystemVerilog simulations with mature existing tools, capture simulator print output, and collect generated waveform files without analyzing them. Use when Codex needs to compile and run module-style testbenches with `iverilog/vvp` or optional Vivado `xsim`, gather stdout/stderr, or verify that a simulation emitted expected `VCD` or `WDB` artifacts.
+description: Execute stage-2 Verilog/SystemVerilog simulations with mature existing tools, capture simulator print output, and collect generated waveform files without analyzing them. Use when a workflow needs to compile and run module-style testbenches with `iverilog/vvp` or optional Vivado `xsim`, gather stdout/stderr, or verify that a simulation emitted expected `VCD` or `WDB` artifacts.
 ---
 
 # Verilog Simulation Execution

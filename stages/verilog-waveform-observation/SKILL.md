@@ -1,6 +1,6 @@
 ---
 name: verilog-waveform-observation
-description: Observe emitted Verilog/SystemVerilog waveform artifacts as structured text windows. Use when Codex needs to inspect VCD files or XSIM WDB artifacts, list signal names, render selected signal values and rise/fall events over a time window, navigate to the next edge, or keep an interactive waveform observation session without opening a GUI waveform viewer.
+description: Observe emitted Verilog/SystemVerilog waveform artifacts as structured text windows. Use when a workflow needs to inspect VCD files or XSIM WDB artifacts, list signal names, render selected signal values and rise/fall events over a time window, navigate to the next edge, or keep an interactive waveform observation session without opening a GUI waveform viewer.
 ---
 
 # Verilog Waveform Observation

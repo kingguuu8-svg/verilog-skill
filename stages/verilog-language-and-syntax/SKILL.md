@@ -1,6 +1,6 @@
 ---
 name: verilog-language-and-syntax
-description: Define and enforce the stage-1 language contract for Verilog and SystemVerilog development. Use when Codex needs to write, review, normalize, or syntax-check Verilog/SystemVerilog for open-source RTL projects, especially to choose a portable language subset, apply project language requirements, distinguish standard legality from backend support, or prepare code for syntax/elaboration checking.
+description: Define and enforce the stage-1 language contract for Verilog and SystemVerilog development. Use when a workflow needs to write, review, normalize, or syntax-check Verilog/SystemVerilog for open-source RTL projects, especially to choose a portable language subset, apply project language requirements, distinguish standard legality from backend support, or prepare code for syntax/elaboration checking.
 ---
 
 # Verilog Language And Syntax
