@@ -12,6 +12,7 @@ from simulation_support import probe_xsim_backend
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_SCRIPT = SCRIPT_DIR / "run_simulation.py"
+EXTRACT_TB_EVENTS_SCRIPT = SCRIPT_DIR / "extract_tb_events.py"
 FIXTURES_DIR = SCRIPT_DIR.parent / "fixtures"
 VALIDATION_ROOT = SCRIPT_DIR.parent.parent.parent / ".tmp" / "verilog-simulation-execution" / "validation"
 
@@ -70,8 +71,27 @@ def main() -> int:
     require_wave_file(pass_payload, "pass_counter")
     if not pass_payload["artifacts"]["wave_indexes"]:
         raise AssertionError("pass_counter: expected at least one generated wave index")
+    tb_event_index = pass_payload["artifacts"]["tb_event_index"]
+    if tb_event_index is None:
+        raise AssertionError("pass_counter: expected a structured TB event index")
+    event_payload = json.loads(Path(tb_event_index).read_text(encoding="utf-8"))
+    if event_payload["summary"]["event_count"] < 3:
+        raise AssertionError("pass_counter: expected at least three structured TB events")
+    if "count_sample" not in event_payload["summary"]["kinds"]:
+        raise AssertionError("pass_counter: expected count_sample events in TB event index")
     if "SIM_PASS" not in pass_payload["checks"]["run"]["stdout"]:
         raise AssertionError("pass_counter: expected SIM_PASS marker in runtime stdout")
+    extract_proc = subprocess.run(
+        [sys.executable, str(EXTRACT_TB_EVENTS_SCRIPT), str(pass_dir / "run.log")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if extract_proc.returncode != 0:
+        raise AssertionError(f"extract_tb_events: expected exit code 0, got {extract_proc.returncode}")
+    extract_payload = json.loads(extract_proc.stdout)
+    if extract_payload["status"] != "ok":
+        raise AssertionError(f"extract_tb_events: expected status ok, got {extract_payload['status']}")
 
     fail_payload = run_case(
         "fail_runtime",

@@ -33,6 +33,7 @@ from simulation_support import (
     run_command_in_dir,
     simulation_support_range,
 )
+from tb_event_support import build_tb_event_index
 
 
 def parse_args() -> argparse.Namespace:
@@ -322,6 +323,8 @@ def make_artifacts(
         "wave_files": [],
         "wave_indexes": [],
         "wave_index_errors": [],
+        "tb_event_index": None,
+        "tb_event_summary": None,
     }
     if elaborate_log is not None:
         artifacts["elaborate_log"] = str(elaborate_log)
@@ -345,6 +348,20 @@ def enrich_wave_indexes(artifacts: dict, mode: str) -> None:
                     "error": index_error,
                 }
             )
+
+
+def enrich_tb_event_index(artifacts: dict, run_stdout: str, run_stderr: str) -> None:
+    output_dir = Path(artifacts["output_dir"])
+    run_log = Path(artifacts["run_log"])
+    index_path, summary = build_tb_event_index(
+        run_log=run_log,
+        stdout=run_stdout,
+        stderr=run_stderr,
+        output_path=output_dir / "tb-events.json",
+    )
+    if index_path is not None:
+        artifacts["tb_event_index"] = str(index_path)
+        artifacts["tb_event_summary"] = summary
 
 
 def handle_requested_wave_missing(
@@ -528,6 +545,7 @@ def run_iverilog_backend(
 
     artifacts["wave_files"] = collect_wave_files(output_dir, wave_file)
     enrich_wave_indexes(artifacts, args.wave_index)
+    enrich_tb_event_index(artifacts, run_proc.stdout, run_proc.stderr)
     if wave_file is not None and not wave_file.exists():
         return handle_requested_wave_missing(
             args=args,
@@ -674,6 +692,7 @@ def run_xsim_backend(
 
     artifacts["wave_files"] = collect_wave_files(output_dir, wave_file)
     enrich_wave_indexes(artifacts, args.wave_index)
+    enrich_tb_event_index(artifacts, run_proc.stdout, run_proc.stderr)
     if wave_file is not None and not wave_file.exists():
         return handle_requested_wave_missing(
             args=args,

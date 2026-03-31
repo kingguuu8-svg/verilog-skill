@@ -61,6 +61,7 @@ Responsibilities:
 - run testbenches with an existing mature backend
 - capture simulator print output
 - collect emitted waveform file paths, including `VCD` and `WDB`
+- optionally extract structured TB event indexes from `SKILL_EVT|...` simulator prints
 
 This stage intentionally stops before waveform analysis.
 
@@ -135,6 +136,9 @@ The current concrete outputs are:
 1. stage-1 language and syntax enforcement
 2. stage-2 simulation execution
 3. stage-3 waveform observation
+
+Stage 2 can also emit a small structured event index from testbench prints.
+That index is meant to help agents and users jump to interesting simulation milestones before opening a large waveform.
 
 Current stage-2 backend split:
 

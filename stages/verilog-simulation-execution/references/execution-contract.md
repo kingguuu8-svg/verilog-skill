@@ -15,6 +15,7 @@ Stage 2 covers:
 - compile and elaboration with `iverilog` or optional Vivado `xvlog/xelab`
 - simulation runtime with `vvp` or optional Vivado `xsim`
 - stdout and stderr capture
+- optional structured TB event extraction from simulator prints
 - wave artifact reporting
 - structured results for compile and run phases
 
@@ -78,6 +79,11 @@ Artifacts should include at minimum:
 - run log path
 - wave file paths that were actually emitted
 
+When structured TB event prints are present, artifacts should also include:
+
+- TB event index path
+- TB event summary
+
 Runtime classification should not rely only on process exit status.
 
 If the simulator exits zero but the testbench prints explicit failure markers such as:
@@ -115,6 +121,10 @@ The current artifact set includes at least:
 
 - `VCD`
 - `WDB`
+
+The optional structured-print artifact is:
+
+- `tb-events.json`
 
 ## Dependency Rule
 

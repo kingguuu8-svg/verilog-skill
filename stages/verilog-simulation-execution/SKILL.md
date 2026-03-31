@@ -69,9 +69,16 @@ Read [references/environment-setup.md](references/environment-setup.md) when you
 
 Read [references/simulation-usage.md](references/simulation-usage.md) before running or extending the execution scripts.
 
+Read [references/tb-event-protocol.md](references/tb-event-protocol.md) when you want to:
+
+- add structured milestone prints to a testbench
+- extract a lightweight event index from simulator output
+- navigate large-wave simulations through sparse project-defined checkpoints
+
 Use the scripts in [scripts/](scripts/) for executable stage-2 work:
 
 - `scripts/run_simulation.py`
+- `scripts/extract_tb_events.py`
 - `scripts/validate_skill.py`
 
 ## Execution Rules
@@ -83,6 +90,7 @@ When running simulations:
 - capture both compile and run logs
 - treat missing wave output as a real failure when a wave file was explicitly requested
 - report artifact paths instead of paraphrasing them away
+- when the testbench has meaningful milestones, prefer structured `SKILL_EVT|...` prints so stage 2 can emit a lightweight event index alongside the normal logs and wave files
 
 ## Backend Direction
 

@@ -59,6 +59,21 @@ Use them for one-off diagnosis or bootstrap situations.
 
 Prefer repo-local tools for steady-state usage.
 
+## Optional TB Event Index Flow
+
+Stage 2 can also extract a lightweight event index from structured testbench prints.
+
+This path does not require extra tools beyond Python.
+It only requires the testbench to emit `SKILL_EVT|...` lines as described in:
+
+- [tb-event-protocol.md](tb-event-protocol.md)
+
+Use this when:
+
+- the waveform is very large
+- you want fast milestone lookup before opening the wave
+- the project already has well-defined verification checkpoints
+
 ## Temporary Directory Behavior
 
 The stage-2 scripts override `TMP` and `TEMP` to:

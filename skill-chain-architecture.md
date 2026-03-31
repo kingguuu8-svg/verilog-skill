@@ -101,6 +101,7 @@ Stage 2 must contain these inseparable parts:
 
 1. simulation compile and runtime execution
 2. structured reporting for stdout, stderr, and emitted wave artifacts
+3. optional extraction of sparse structured TB milestones from simulator prints
 
 ## Stage-2 Inputs
 
@@ -124,6 +125,7 @@ Stage 2 should produce:
 - compiled image path
 - log file paths
 - wave file paths, including simulator-native artifacts such as `WDB`
+- optional TB event index path and summary
 - next-action hint
 
 ## Stage-2 Execution Contract
@@ -136,6 +138,7 @@ The simulation side of stage 2 should:
 - keep artifact paths explicit
 - distinguish compile failures from runtime failures
 - report wave files without analyzing them
+- extract sparse TB event markers when the testbench emits a protocol-aligned structured print stream
 
 ## Stage-3 Definition
 

@@ -21,6 +21,7 @@ python scripts/run_simulation.py <inputs...>
 - `--runtime-arg`
 - `--wave-file`
 - `--output-dir`
+- `--wave-index`
 
 ## Typical Examples
 
@@ -65,6 +66,7 @@ It writes:
 - `sim.out`
 - `compile.log`
 - `run.log`
+- `tb-events.json` when the testbench prints structured `SKILL_EVT|...` lines
 - `elaborate.log` when the backend separates elaboration from compile
 - any wave files emitted by the testbench
 
@@ -97,8 +99,39 @@ The runner returns JSON with:
 - `artifacts.elaborate_log` when present
 - `artifacts.run_log`
 - `artifacts.wave_files`
+- `artifacts.wave_indexes`
+- `artifacts.tb_event_index` when structured TB event prints were found
+- `artifacts.tb_event_summary` when structured TB event prints were found
 
 Use these fields directly instead of scraping plain text logs when integrating this stage into later skills.
+
+## Structured TB Event Index
+
+When a testbench emits structured display lines with the `SKILL_EVT|` prefix, stage 2 extracts them into `tb-events.json`.
+
+Example testbench line:
+
+```verilog
+$display("SKILL_EVT|time_ps=%0t|kind=reset_release|signal=rst_n|value=%0b", $time, rst_n);
+```
+
+Use this for sparse, meaningful milestones such as:
+
+- reset release
+- handshake acceptance
+- FIFO push or pop
+- end-of-test summary
+
+Do not use it to mirror every clock edge.
+The point is to create a small navigation index, not a second waveform.
+
+You can also extract the index explicitly from a stage-2 run log:
+
+```bash
+python scripts/extract_tb_events.py .tmp/verilog-simulation-execution/run-123/run.log
+```
+
+Read [tb-event-protocol.md](tb-event-protocol.md) before standardizing the print format across a project.
 
 ## Runtime Failure Detection
 
