@@ -68,19 +68,34 @@ def build_runtime_env() -> dict[str, str]:
     return env
 
 
-def resolve_backend_path(env_var: str, executable_name: str, local_candidates: list[str] | None = None) -> str | None:
+def resolve_backend_path(
+    env_var: str,
+    executable_name: str,
+    local_candidates: list[str] | None = None,
+    allow_path: bool = True,
+) -> dict[str, str] | None:
     configured = os.environ.get(env_var)
     if configured:
-        path = Path(configured)
+        path = Path(configured).expanduser()
         if path.exists():
-            return str(path)
+            return {
+                "path": str(path.resolve()),
+                "origin": "environment",
+            }
     for candidate in local_candidates or []:
-        path = REPO_ROOT / candidate
+        path = (REPO_ROOT / candidate).resolve()
         if path.exists():
-            return str(path)
-    found = shutil.which(executable_name)
-    if found:
-        return found
+            return {
+                "path": str(path),
+                "origin": "repo_local",
+            }
+    if allow_path:
+        found = shutil.which(executable_name)
+        if found:
+            return {
+                "path": str(Path(found).resolve()),
+                "origin": "path",
+            }
     return None
 
 

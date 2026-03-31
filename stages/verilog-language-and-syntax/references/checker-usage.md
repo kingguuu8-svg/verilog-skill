@@ -25,7 +25,7 @@ Backend discovery order:
 
 - explicit environment variable
 - repo-local tool installation
-- system `PATH`
+- system `PATH` compatibility fallback
 
 Current environment variables:
 
@@ -33,9 +33,46 @@ Current environment variables:
 - `VERIBLE_VERILOG_SYNTAX_BIN`
 - `VERIBLE_VERILOG_LINT_BIN`
 
-Current repo-local tool location:
+Current repo-local tool locations:
 
 - `tools/verible/current`
+- `tools/iverilog/current`
+
+Current repo-local Verible executable locations:
+
+- `tools/verible/current/verible-verilog-syntax.exe`
+- `tools/verible/current/verible-verilog-lint.exe`
+
+Current repo-local Icarus executable location:
+
+- `tools/iverilog/current/bin/iverilog.exe`
+- `tools/iverilog/current/bin/iverilog`
+
+Repo-local Icarus bootstrap command:
+
+```bash
+python scripts/install_iverilog.py --source-root <existing-icarus-root>
+```
+
+Or, if you only have the executable path once:
+
+```bash
+python scripts/install_iverilog.py --source-bin <path-to-iverilog>
+```
+
+Repo-local Verible bootstrap command:
+
+```bash
+python scripts/install_verible.py --source-root <existing-verible-root>
+```
+
+Or, if you only have one Verible executable path once:
+
+```bash
+python scripts/install_verible.py --source-bin <path-to-verible-verilog-syntax>
+```
+
+After repo-local installs succeed, stage-1 checking does not require backend-specific environment variables or `PATH` for Icarus/Verible discovery.
 
 ## Main Commands
 
@@ -43,6 +80,13 @@ Probe tool availability:
 
 ```bash
 python scripts/probe_backend.py --backend all
+```
+
+Bootstrap repo-local tool copies when needed:
+
+```bash
+python scripts/install_verible.py --source-root <existing-verible-root>
+python scripts/install_iverilog.py --source-root <existing-icarus-root>
 ```
 
 Run syntax/elaboration checking:
@@ -61,6 +105,12 @@ Run the built-in fixture validation:
 
 ```bash
 python scripts/validate_skill.py
+```
+
+Probe only the repo-local Icarus path after bootstrap:
+
+```bash
+python scripts/probe_backend.py --backend iverilog
 ```
 
 ## Supported Inputs

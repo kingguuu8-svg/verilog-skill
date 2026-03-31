@@ -12,6 +12,8 @@ BACKEND_SPECS = {
         "env_var": "IVERILOG_BIN",
         "executable": "iverilog",
         "local_candidates": [
+            "tools/iverilog/current/bin/iverilog.exe",
+            "tools/iverilog/current/bin/iverilog",
             "tools/iverilog/current/iverilog.exe",
             "tools/iverilog/current/iverilog",
         ],
@@ -54,14 +56,16 @@ def parse_args() -> argparse.Namespace:
 
 def probe_backend(name: str) -> dict:
     spec = BACKEND_SPECS[name]
-    backend_path = resolve_backend_path(spec["env_var"], spec["executable"], spec.get("local_candidates"))
-    if backend_path is None:
+    resolution = resolve_backend_path(spec["env_var"], spec["executable"], spec.get("local_candidates"))
+    if resolution is None:
         return {
             "backend": name,
             "status": "environment_error",
             "category": "backend_not_found",
             "message": f"{spec['executable']} executable not found",
         }
+    backend_path = resolution["path"]
+    backend_origin = resolution["origin"]
 
     env = build_runtime_env()
     try:
@@ -70,6 +74,7 @@ def probe_backend(name: str) -> dict:
         return {
             "backend": name,
             "backend_path": backend_path,
+            "backend_origin": backend_origin,
             "status": "environment_error",
             "category": "backend_not_runnable",
             "message": str(exc),
@@ -79,6 +84,7 @@ def probe_backend(name: str) -> dict:
         return {
             "backend": name,
             "backend_path": backend_path,
+            "backend_origin": backend_origin,
             "status": "environment_error",
             "category": "backend_not_runnable",
             "message": f"{spec['executable']} returned non-zero during version probe",
@@ -91,6 +97,7 @@ def probe_backend(name: str) -> dict:
     return {
         "backend": name,
         "backend_path": backend_path,
+        "backend_origin": backend_origin,
         "status": "ok",
         "category": "backend_ready",
         "language_mode_default": spec["language_mode_default"],

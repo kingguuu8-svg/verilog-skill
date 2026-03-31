@@ -72,7 +72,17 @@ Backend discovery may use:
 
 - explicit environment variables
 - repo-local tool installs
-- system `PATH`
+- system `PATH` compatibility fallback
+
+For repo-local Icarus installs, keep the original directory shape under:
+
+- `tools/iverilog/current/bin`
+- `tools/iverilog/current/lib`
+- `tools/iverilog/current/include`
+
+For repo-local Verible installs, keep the extracted executable bundle under:
+
+- `tools/verible/current`
 
 ## Output Contract
 
@@ -165,6 +175,7 @@ The first implementation should stay minimal:
 - run Verible only as a syntax phase
 - run Icarus as the required elaboration baseline
 - return normalized diagnostics and locations
+- prefer repo-local tools before any system-level `PATH` fallback
 
 Do not add simulation execution in this first checker contract.
 Simulation belongs to the next bounded layer unless explicitly requested later.
@@ -180,6 +191,8 @@ The first scripts should be:
 Optional later additions:
 
 - `scripts/check_backend_matrix.py`
+- `scripts/install_verible.py`
+- `scripts/install_iverilog.py`
 
 ## Minimum Validation Matrix
 

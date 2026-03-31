@@ -84,6 +84,8 @@ Read [references/lint-checker-contract.md](references/lint-checker-contract.md) 
 
 Use the scripts in [scripts/](scripts/) for executable stage-1 checking:
 
+- `scripts/install_verible.py`
+- `scripts/install_iverilog.py`
 - `scripts/probe_backend.py`
 - `scripts/check_syntax.py`
 - `scripts/check_lint.py`
@@ -124,6 +126,11 @@ Default behavior:
 
 - `auto`: use Verible first when available and input shape is supported
 - otherwise fall back to Icarus-only syntax plus elaboration
+
+Tool installation preference:
+
+- prefer repo-local tools under `tools/<backend>/current`
+- treat `PATH` only as a compatibility fallback, not as the primary dependency path
 
 Optional next layer:
 
