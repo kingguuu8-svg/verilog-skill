@@ -56,6 +56,7 @@ XPM_SOURCE_RELATIVE_PATHS = (
 )
 XPM_TOKEN_RE = re.compile(r"\bxpm_[a-zA-Z0-9_]+\b")
 HDL_LOCATION_SUFFIXES = {".v", ".vh", ".sv", ".svh", ".f"}
+WAVE_SCAN_SKIP_DIRS = {".Xil", "xsim.dir", "__pycache__"}
 
 
 def ensure_temp_dir() -> str:
@@ -450,18 +451,27 @@ def filter_hdl_locations(locations: list[dict]) -> list[dict]:
 
 def collect_wave_files(output_dir: Path, requested_wave_file: Path | None = None) -> list[str]:
     found: list[str] = []
+    seen: set[str] = set()
+
+    def add_wave_path(path: Path) -> None:
+        resolved = str(path.resolve())
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        found.append(resolved)
+
     if requested_wave_file is not None and requested_wave_file.exists():
-        found.append(str(requested_wave_file.resolve()))
+        add_wave_path(requested_wave_file)
 
     if output_dir.exists():
-        for candidate in sorted(output_dir.rglob("*")):
-            if not candidate.is_file():
-                continue
-            if candidate.suffix.lower() not in WAVE_SUFFIXES:
-                continue
-            resolved = str(candidate.resolve())
-            if resolved not in found:
-                found.append(resolved)
+        for root, dirnames, filenames in os.walk(output_dir, topdown=True):
+            dirnames[:] = sorted(name for name in dirnames if name not in WAVE_SCAN_SKIP_DIRS)
+            root_path = Path(root)
+            for filename in sorted(filenames):
+                candidate = root_path / filename
+                if candidate.suffix.lower() not in WAVE_SUFFIXES:
+                    continue
+                add_wave_path(candidate)
     return found
 
 

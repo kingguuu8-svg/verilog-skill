@@ -1,0 +1,20 @@
+$date
+  2026-03-31
+$end
+$version
+  verilog-skill stage-3 fixture
+$end
+$timescale 1ps $end
+$scope module tb $end
+$var wire 1 ! clk $end
+$var wire 8 " \gen_row[0].gen_col[0].roi_pix [7:0] $end
+$upscope $end
+$enddefinitions $end
+#0
+0!
+b00000000 "
+#10
+1!
+b00000001 "
+#20
+0!

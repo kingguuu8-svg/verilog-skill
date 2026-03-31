@@ -12,6 +12,7 @@ from waveform_support import (
     load_waveform_selection,
     make_render_payload,
     normalize_signal_tokens,
+    parse_time_value,
     save_session,
 )
 
@@ -111,10 +112,27 @@ def main() -> int:
     anchor_text = args.anchor
     if anchor_text is None:
         anchor_text = str(session["anchor_ticks"])
-    refreshed, refresh_error = load_waveform_selection(session["wave_file"], signal_tokens, args.window, anchor_text)
-    if refresh_error is not None:
-        print(json.dumps(refresh_error, indent=2))
-        return 1
+    current_names = [item["display_name"] for item in session["selected_signals"]]
+    duplicate_free = len(current_names) == len(set(current_names)) and len(signal_tokens) == len(set(signal_tokens))
+    if duplicate_free and set(signal_tokens) == set(current_names):
+        selected_map = {item["display_name"]: dict(item) for item in session["selected_signals"]}
+        window_ticks, window_error = parse_time_value(args.window, int(session["timescale_fs"]))
+        if window_error is not None:
+            print(json.dumps(window_error, indent=2))
+            return 1
+        parsed_anchor, anchor_error = parse_time_value(anchor_text, int(session["timescale_fs"]))
+        if anchor_error is not None:
+            print(json.dumps(anchor_error, indent=2))
+            return 1
+        session["selected_signals"] = [selected_map[name] for name in signal_tokens]
+        session["window_ticks"] = int(window_ticks)
+        session["anchor_ticks"] = int(parsed_anchor)
+        refreshed = session
+    else:
+        refreshed, refresh_error = load_waveform_selection(session["wave_file"], signal_tokens, args.window, anchor_text)
+        if refresh_error is not None:
+            print(json.dumps(refresh_error, indent=2))
+            return 1
     save_session(args.session_id, refreshed)
     payload = make_render_payload(refreshed, "Waveform observation session updated")
     payload["session_id"] = args.session_id

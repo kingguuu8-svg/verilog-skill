@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,12 +16,14 @@ STAGE2_RUN = REPO_ROOT / "stages" / "verilog-simulation-execution" / "scripts" /
 OBSERVE_SCRIPT = SCRIPT_DIR / "observe_waveform.py"
 SESSION_SCRIPT = SCRIPT_DIR / "wave_session.py"
 SHELL_SCRIPT = SCRIPT_DIR / "wave_shell.py"
+FIXTURE_DIR = STAGE3_DIR / "fixtures"
 VALIDATE_ROOT = REPO_ROOT / ".tmp" / "verilog-waveform-observation" / "validate"
 STAGE2_SCRIPTS = REPO_ROOT / "stages" / "verilog-simulation-execution" / "scripts"
 if str(STAGE2_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(STAGE2_SCRIPTS))
 
 from simulation_support import probe_xsim_backend  # noqa: E402
+from waveform_support import cached_export_is_valid, resolve_companion_vcd  # noqa: E402
 
 
 def run_command(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -69,6 +72,90 @@ def main() -> int:
     if not wave_files:
         raise AssertionError("Stage-2 sample simulation did not emit a wave file")
     wave_file = wave_files[0]
+
+    escaped_fixture = FIXTURE_DIR / "escaped_identifier.vcd"
+    escaped_catalog = run_json([sys.executable, str(OBSERVE_SCRIPT), "list-signals", str(escaped_fixture)])
+    escaped_name = r"tb.\gen_row[0].gen_col[0].roi_pix"
+    escaped_names = {item["canonical_name"] for item in escaped_catalog["signals"]}
+    if escaped_name not in escaped_names:
+        raise AssertionError("Escaped-identifier fixture is missing the expected canonical signal name")
+
+    escaped_render = run_json(
+        [
+            sys.executable,
+            str(OBSERVE_SCRIPT),
+            "render-window",
+            str(escaped_fixture),
+            "--signals",
+            "tb.clk",
+            escaped_name,
+            "--window",
+            "20ps",
+            "--anchor",
+            "0ps",
+        ]
+    )
+    if not any("10ps" in line and "tb.clk: rise" in line for line in escaped_render["rendered_text"]):
+        raise AssertionError("Escaped-identifier fixture did not render the clk rise event")
+    if not any("10ps" in line and r"tb.\gen_row[0].gen_col[0].roi_pix: value_change 00000000->00000001" in line for line in escaped_render["rendered_text"]):
+        raise AssertionError("Escaped-identifier fixture did not render the vector value change")
+
+    freshness_root = VALIDATE_ROOT / "freshness-check"
+    freshness_root.mkdir(parents=True, exist_ok=True)
+    wdb_path = freshness_root / "sample.wdb"
+    vcd_path = freshness_root / "sample.vcd"
+    wdb_path.write_text("wdb", encoding="ascii")
+    vcd_path.write_text("$end", encoding="ascii")
+    os.utime(wdb_path, ns=(20_000_000_000, 20_000_000_000))
+    os.utime(vcd_path, ns=(10_000_000_000, 10_000_000_000))
+    if resolve_companion_vcd(wdb_path) is not None:
+        raise AssertionError("Stale companion VCD should not shadow a newer WDB file")
+    os.utime(vcd_path, ns=(30_000_000_000, 30_000_000_000))
+    if resolve_companion_vcd(wdb_path) != vcd_path.resolve():
+        raise AssertionError("Fresh companion VCD should be accepted for WDB resolution")
+
+    cache_root = VALIDATE_ROOT / "cache-check"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_wave = cache_root / "cached.wdb"
+    cache_export = cache_root / "cached.vcd"
+    cache_metadata = cache_root / "metadata.json"
+    cache_wave.write_text("wdb", encoding="ascii")
+    cache_export.write_text("$end", encoding="ascii")
+    cache_fingerprint = cache_wave.stat()
+    cache_metadata.write_text(
+        json.dumps(
+            {
+                "wave_file": str(cache_wave.resolve()),
+                "wave_size": cache_fingerprint.st_size,
+                "wave_mtime_ns": cache_fingerprint.st_mtime_ns,
+                "snapshot_name": "tb_cached_behav",
+                "exported_vcd": str(cache_export.resolve()),
+                "returncode": 0,
+                "success": False,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    if cached_export_is_valid(cache_metadata, cache_wave, "tb_cached_behav", cache_export):
+        raise AssertionError("Failed WDB export metadata must not validate a cached VCD")
+    cache_metadata.write_text(
+        json.dumps(
+            {
+                "wave_file": str(cache_wave.resolve()),
+                "wave_size": cache_fingerprint.st_size,
+                "wave_mtime_ns": cache_fingerprint.st_mtime_ns,
+                "snapshot_name": "tb_cached_behav",
+                "exported_vcd": str(cache_export.resolve()),
+                "returncode": 0,
+                "success": True,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    if not cached_export_is_valid(cache_metadata, cache_wave, "tb_cached_behav", cache_export):
+        raise AssertionError("Successful WDB export metadata should validate a matching cached VCD")
 
     catalog_payload = run_json([sys.executable, str(OBSERVE_SCRIPT), "list-signals", wave_file])
     canonical_names = {item["canonical_name"] for item in catalog_payload["signals"]}

@@ -11,6 +11,7 @@ from waveform_support import (
     load_waveform_selection,
     make_render_payload,
     normalize_signal_tokens,
+    parse_time_value,
     save_session,
 )
 
@@ -97,15 +98,34 @@ def main() -> int:
             except SystemExit:
                 print("Invalid set command. Use: set --signals sigA sigB --window 20000ps [--anchor 5000ps]")
                 continue
-            refreshed, refresh_error = load_waveform_selection(
-                session["wave_file"],
-                normalize_signal_tokens(parsed.signals),
-                parsed.window,
-                parsed.anchor,
-            )
-            if refresh_error is not None:
-                print(refresh_error["message"])
-                continue
+            signal_tokens = normalize_signal_tokens(parsed.signals)
+            current_names = [item["display_name"] for item in session["selected_signals"]]
+            duplicate_free = len(current_names) == len(set(current_names)) and len(signal_tokens) == len(set(signal_tokens))
+            if duplicate_free and set(signal_tokens) == set(current_names):
+                anchor_text = parsed.anchor if parsed.anchor is not None else str(session["anchor_ticks"])
+                window_ticks, window_error = parse_time_value(parsed.window, int(session["timescale_fs"]))
+                if window_error is not None:
+                    print(window_error["message"])
+                    continue
+                parsed_anchor, anchor_error = parse_time_value(anchor_text, int(session["timescale_fs"]))
+                if anchor_error is not None:
+                    print(anchor_error["message"])
+                    continue
+                selected_map = {item["display_name"]: dict(item) for item in session["selected_signals"]}
+                session["selected_signals"] = [selected_map[name] for name in signal_tokens]
+                session["window_ticks"] = int(window_ticks)
+                session["anchor_ticks"] = int(parsed_anchor)
+                refreshed = session
+            else:
+                refreshed, refresh_error = load_waveform_selection(
+                    session["wave_file"],
+                    signal_tokens,
+                    parsed.window,
+                    parsed.anchor,
+                )
+                if refresh_error is not None:
+                    print(refresh_error["message"])
+                    continue
             session = refreshed
             save_session(session_id, session)
             payload = make_render_payload(session, "Waveform observation session updated")

@@ -35,13 +35,11 @@ TIME_UNIT_TO_FS = {
     "ms": 1_000_000_000_000,
     "s": 1_000_000_000_000_000,
 }
-REFERENCE_RE = re.compile(
-    r"^(?P<name>[^\[]+?)(?:\s*\[(?P<msb>-?\d+)(?::(?P<lsb>-?\d+))?\])?$"
-)
 BIT_SELECT_RE = re.compile(r"^(?P<base>.+)\[(?P<index>-?\d+)\]$")
 TIME_RE = re.compile(r"^(?P<value>\d+)(?P<unit>fs|ps|ns|us|ms|s)?$")
 TIMESCALE_RE = re.compile(r"^(?P<value>\d+)\s*(?P<unit>fs|ps|ns|us|ms|s)$")
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+RANGE_SUFFIX_RE = re.compile(r"\[(?P<msb>-?\d+)(?::(?P<lsb>-?\d+))?\]$")
 
 
 @dataclass
@@ -165,9 +163,67 @@ def resolve_input_wave_path(path_text: str) -> tuple[Path | None, dict | None]:
 
 def resolve_companion_vcd(wave_file: Path) -> Path | None:
     companion = wave_file.with_suffix(".vcd")
-    if companion.exists():
-        return companion.resolve()
-    return None
+    if not companion.exists():
+        return None
+    try:
+        wave_stat = wave_file.stat()
+        companion_stat = companion.stat()
+    except OSError:
+        return None
+    if companion_stat.st_size <= 0:
+        return None
+    if companion_stat.st_mtime_ns < wave_stat.st_mtime_ns:
+        return None
+    return companion.resolve()
+
+def load_json_file(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def build_wave_fingerprint(wave_file: Path) -> dict[str, int | str]:
+    stat = wave_file.stat()
+    return {
+        "wave_file": str(wave_file.resolve()),
+        "wave_size": stat.st_size,
+        "wave_mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def cached_export_is_valid(
+    metadata_path: Path,
+    wave_file: Path,
+    snapshot_name: str,
+    exported_vcd: Path,
+) -> bool:
+    try:
+        exported_stat = exported_vcd.stat()
+        fingerprint = build_wave_fingerprint(wave_file)
+    except OSError:
+        return False
+    if exported_stat.st_size <= 0:
+        return False
+
+    metadata = load_json_file(metadata_path)
+    if metadata is None:
+        return False
+    if not metadata.get("success"):
+        return False
+    if metadata.get("returncode") != 0:
+        return False
+    if metadata.get("snapshot_name") != snapshot_name:
+        return False
+    if metadata.get("wave_file") != fingerprint["wave_file"]:
+        return False
+    if metadata.get("wave_size") != fingerprint["wave_size"]:
+        return False
+    if metadata.get("wave_mtime_ns") != fingerprint["wave_mtime_ns"]:
+        return False
+    return metadata.get("exported_vcd") == str(exported_vcd.resolve())
 
 
 def wave_cache_dir(wave_file: Path) -> Path:
@@ -289,7 +345,7 @@ def export_wdb_to_vcd(wave_file: Path) -> tuple[ResolvedWaveSource | None, dict 
     export_log = cache_dir / "xsim-export.log"
     export_tcl = cache_dir / "export_from_wdb.tcl"
     metadata_path = cache_dir / "metadata.json"
-    if exported_vcd.exists() and exported_vcd.stat().st_size > 0:
+    if cached_export_is_valid(metadata_path, wave_file, snapshot_name, exported_vcd):
         return ResolvedWaveSource(
             requested_wave_file=str(wave_file),
             requested_format=wave_file.suffix.lower(),
@@ -318,13 +374,22 @@ def export_wdb_to_vcd(wave_file: Path) -> tuple[ResolvedWaveSource | None, dict 
     )
     stdout = decode_stream(proc.stdout)
     stderr = decode_stream(proc.stderr)
+    success = proc.returncode == 0 and exported_vcd.exists() and exported_vcd.stat().st_size > 0
+    if not success and exported_vcd.exists():
+        try:
+            exported_vcd.unlink()
+        except OSError:
+            pass
+    fingerprint = build_wave_fingerprint(wave_file)
     metadata_path.write_text(
         json.dumps(
             {
-                "wave_file": str(wave_file.resolve()),
+                **fingerprint,
                 "snapshot_name": snapshot_name,
+                "exported_vcd": str(exported_vcd.resolve()),
                 "command": command,
                 "returncode": proc.returncode,
+                "success": success,
                 "stdout": stdout,
                 "stderr": stderr,
             },
@@ -333,7 +398,7 @@ def export_wdb_to_vcd(wave_file: Path) -> tuple[ResolvedWaveSource | None, dict 
         encoding="utf-8",
     )
 
-    if proc.returncode != 0 or not exported_vcd.exists() or exported_vcd.stat().st_size == 0:
+    if not success:
         return None, make_error_payload(
             status="run_error",
             category="wdb_export_failed",
@@ -396,18 +461,24 @@ def parse_timescale_text(text: str) -> tuple[str, int]:
 
 
 def parse_reference_text(ref_text: str) -> tuple[str, int | None, int | None]:
-    match = REFERENCE_RE.match(ref_text.strip())
-    if not match:
+    candidate = ref_text.strip()
+    if not candidate:
         raise ValueError(f"Unsupported VCD reference syntax: {ref_text}")
-    name = match.group("name").strip()
-    msb = match.group("msb")
-    lsb = match.group("lsb")
-    if msb is None:
-        return name, None, None
-    if lsb is None:
-        value = int(msb)
+
+    match = RANGE_SUFFIX_RE.search(candidate)
+    if match is None:
+        return candidate, None, None
+
+    name = candidate[: match.start()].rstrip()
+    if not name:
+        raise ValueError(f"Unsupported VCD reference syntax: {ref_text}")
+
+    msb = int(match.group("msb"))
+    lsb_text = match.group("lsb")
+    if lsb_text is None:
+        value = msb
         return name, value, value
-    return name, int(msb), int(lsb)
+    return name, msb, int(lsb_text)
 
 
 def build_alias_candidates(scope_path: list[str], base_name: str) -> list[str]:
@@ -511,6 +582,31 @@ def parse_vcd_header(wave_file: Path) -> dict:
     }
 
 
+def load_vcd_header(wave_file: Path) -> tuple[dict | None, dict | None]:
+    try:
+        return parse_vcd_header(wave_file), None
+    except ValueError as exc:
+        return None, make_error_payload(
+            status="unsupported_feature",
+            category="unsupported_vcd_header",
+            message="Waveform header contains unsupported VCD syntax",
+            details={
+                "wave_file": str(wave_file),
+                "reason": str(exc),
+            },
+        )
+    except OSError as exc:
+        return None, make_error_payload(
+            status="input_error",
+            category="wave_file_read_failed",
+            message="Waveform file could not be read",
+            details={
+                "wave_file": str(wave_file),
+                "reason": str(exc),
+            },
+        )
+
+
 def unknown_value(width: int) -> str:
     return "x" if width == 1 else ("x" * width)
 
@@ -538,7 +634,13 @@ def parse_value_change_line(line: str) -> tuple[str, str] | None:
     return None
 
 
-def parse_selected_events(wave_file: Path, selected_codes: set[str], code_to_decl: dict[str, dict]) -> dict[str, list[list[int | str]]]:
+def parse_selected_events(
+    wave_file: Path,
+    selected_codes: set[str],
+    code_to_decl: dict[str, dict],
+    *,
+    stop_after_ticks: int | None = None,
+) -> dict[str, list[list[int | str]]]:
     events_by_code: dict[str, list[list[int | str]]] = {code: [] for code in selected_codes}
     last_values: dict[str, str] = {}
     header_done = False
@@ -555,6 +657,8 @@ def parse_selected_events(wave_file: Path, selected_codes: set[str], code_to_dec
                 continue
             if line.startswith("#"):
                 current_time = int(line[1:])
+                if stop_after_ticks is not None and current_time > stop_after_ticks:
+                    break
                 continue
             if line.startswith("$"):
                 continue
@@ -580,7 +684,9 @@ def list_signals(wave_file_text: str) -> dict:
         return wave_error
 
     resolved_wave_file = Path(wave_source.resolved_wave_file)
-    header = parse_vcd_header(resolved_wave_file)
+    header, header_error = load_vcd_header(resolved_wave_file)
+    if header_error is not None:
+        return header_error
     signals: list[dict] = []
     for decl in header["declarations"]:
         signals.append(
@@ -752,13 +858,19 @@ def observed_value(raw_value: str, selected: dict) -> str:
     return raw_value[position]
 
 
-def value_at_anchor(events: list[list[int | str]], anchor_ticks: int, default_value: str) -> str:
+def anchor_state_for_events(
+    events: list[list[int | str]],
+    anchor_ticks: int,
+    default_value: str,
+) -> tuple[str, int]:
     current = default_value
-    for time_tick, value in events:
+    next_index = len(events)
+    for index, (time_tick, value) in enumerate(events):
         if int(time_tick) > anchor_ticks:
+            next_index = index
             break
         current = str(value)
-    return current
+    return current, next_index
 
 
 def classify_transition(old_value: str, new_value: str, width: int) -> str:
@@ -779,13 +891,18 @@ def render_window(session: dict) -> dict:
     timescale_fs = int(session["timescale_fs"])
     end_ticks = anchor_ticks + window_ticks
 
+    selected_codes: list[str] = []
     current_raw_by_code: dict[str, str] = {}
+    next_index_by_code: dict[str, int] = {}
     for selected in selected_signals:
         code = selected["code"]
         if code in current_raw_by_code:
             continue
         default_value = unknown_value(int(selected["base_width"]))
-        current_raw_by_code[code] = value_at_anchor(events_by_code[code], anchor_ticks, default_value)
+        current_raw, next_index = anchor_state_for_events(events_by_code[code], anchor_ticks, default_value)
+        current_raw_by_code[code] = current_raw
+        next_index_by_code[code] = next_index
+        selected_codes.append(code)
 
     previous_values = [observed_value(current_raw_by_code[selected["code"]], selected) for selected in selected_signals]
 
@@ -806,21 +923,28 @@ def render_window(session: dict) -> dict:
     }
     rows.append(anchor_row)
 
-    times_in_window = sorted(
-        {
-            int(time_tick)
-            for events in events_by_code.values()
-            for time_tick, _value in events
-            if anchor_ticks < int(time_tick) <= end_ticks
-        }
-    )
+    while True:
+        next_time: int | None = None
+        for code in selected_codes:
+            events = events_by_code[code]
+            next_index = next_index_by_code[code]
+            if next_index >= len(events):
+                continue
+            candidate_time = int(events[next_index][0])
+            if candidate_time > end_ticks:
+                continue
+            if next_time is None or candidate_time < next_time:
+                next_time = candidate_time
+        if next_time is None:
+            break
 
-    for time_tick in times_in_window:
-        for code, events in events_by_code.items():
-            for event_time, raw_value in events:
-                if int(event_time) != time_tick:
-                    continue
-                current_raw_by_code[code] = str(raw_value)
+        for code in selected_codes:
+            events = events_by_code[code]
+            next_index = next_index_by_code[code]
+            while next_index < len(events) and int(events[next_index][0]) == next_time:
+                current_raw_by_code[code] = str(events[next_index][1])
+                next_index += 1
+            next_index_by_code[code] = next_index
 
         row_entries: list[dict] = []
         changed = False
@@ -853,8 +977,8 @@ def render_window(session: dict) -> dict:
         if changed:
             rows.append(
                 {
-                    "time_ticks": time_tick,
-                    "time_text": format_time_ticks(time_tick, timescale_fs),
+                    "time_ticks": next_time,
+                    "time_text": format_time_ticks(next_time, timescale_fs),
                     "kind": "event",
                     "signals": row_entries,
                 }
@@ -887,13 +1011,17 @@ def load_waveform_selection(
     signal_tokens: list[str],
     window_text: str,
     anchor_text: str | None,
+    *,
+    stop_after_window: bool = False,
 ) -> tuple[dict | None, dict | None]:
     wave_source, wave_error = resolve_wave_source(wave_file_text)
     if wave_error is not None:
         return None, wave_error
 
     resolved_wave_file = Path(wave_source.resolved_wave_file)
-    header = parse_vcd_header(resolved_wave_file)
+    header, header_error = load_vcd_header(resolved_wave_file)
+    if header_error is not None:
+        return None, header_error
     selected_signals, signal_error = resolve_selected_signals(header, signal_tokens)
     if signal_error is not None:
         return None, signal_error
@@ -918,7 +1046,24 @@ def load_waveform_selection(
 
     selected_dicts = [asdict(item) for item in selected_signals]
     selected_codes = {item["code"] for item in selected_dicts}
-    events_by_code = parse_selected_events(resolved_wave_file, selected_codes, header["code_to_decl"])
+    stop_after_ticks = anchor_ticks + int(window_ticks) if stop_after_window else None
+    try:
+        events_by_code = parse_selected_events(
+            resolved_wave_file,
+            selected_codes,
+            header["code_to_decl"],
+            stop_after_ticks=stop_after_ticks,
+        )
+    except OSError as exc:
+        return None, make_error_payload(
+            status="input_error",
+            category="wave_file_read_failed",
+            message="Waveform events could not be read",
+            details={
+                "wave_file": str(resolved_wave_file),
+                "reason": str(exc),
+            },
+        )
 
     session = {
         "wave_file": wave_source.requested_wave_file,
@@ -983,13 +1128,15 @@ def find_next_event(session: dict, signal_name: str, edge: str) -> tuple[int | N
 
     anchor_ticks = int(session["anchor_ticks"])
     default_value = unknown_value(int(target["base_width"]))
-    current_raw = value_at_anchor(session["events_by_code"][target["code"]], anchor_ticks, default_value)
+    current_raw, start_index = anchor_state_for_events(
+        session["events_by_code"][target["code"]],
+        anchor_ticks,
+        default_value,
+    )
     current_value = observed_value(current_raw, target)
 
-    for time_tick, raw_value in session["events_by_code"][target["code"]]:
+    for time_tick, raw_value in session["events_by_code"][target["code"]][start_index:]:
         time_tick = int(time_tick)
-        if time_tick <= anchor_ticks:
-            continue
         next_value = observed_value(str(raw_value), target)
         transition = classify_transition(current_value, next_value, int(target["width"]))
         if edge == "change" and next_value != current_value:

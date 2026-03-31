@@ -50,7 +50,13 @@ def main() -> int:
         return 0 if payload["status"] == "ok" else 1
 
     signal_tokens = normalize_signal_tokens(args.signals)
-    session, error = load_waveform_selection(args.wave_file, signal_tokens, args.window, args.anchor)
+    session, error = load_waveform_selection(
+        args.wave_file,
+        signal_tokens,
+        args.window,
+        args.anchor,
+        stop_after_window=True,
+    )
     if error is not None:
         print(json.dumps(error, indent=2))
         return 1
