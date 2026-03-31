@@ -3,8 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+STAGE3_SCRIPTS = (Path(__file__).resolve().parents[1] / ".." / "verilog-waveform-observation" / "scripts").resolve()
+if str(STAGE3_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(STAGE3_SCRIPTS))
+
+from waveform_support import maybe_build_vcd_index  # noqa: E402
 
 from simulation_support import (
     build_runtime_env,
@@ -58,6 +65,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--wave-file", help="Requested waveform file path")
     parser.add_argument("--output-dir", help="Directory for compiled image and logs")
+    parser.add_argument(
+        "--wave-index",
+        choices=["auto", "always", "never"],
+        default="never",
+        help="Generate sidecar VCD indexes after simulation",
+    )
     return parser.parse_args()
 
 
@@ -307,12 +320,31 @@ def make_artifacts(
         "compile_log": str(compile_log),
         "run_log": str(run_log),
         "wave_files": [],
+        "wave_indexes": [],
+        "wave_index_errors": [],
     }
     if elaborate_log is not None:
         artifacts["elaborate_log"] = str(elaborate_log)
     if wave_file is not None:
         artifacts["requested_wave_file"] = str(wave_file)
     return artifacts
+
+
+def enrich_wave_indexes(artifacts: dict, mode: str) -> None:
+    if mode == "never":
+        return
+    for wave_text in artifacts.get("wave_files", []):
+        wave_path = Path(wave_text)
+        index_path, index_error = maybe_build_vcd_index(wave_path, mode=mode)
+        if index_path is not None:
+            artifacts["wave_indexes"].append(str(index_path))
+        if index_error is not None:
+            artifacts["wave_index_errors"].append(
+                {
+                    "wave_file": str(wave_path),
+                    "error": index_error,
+                }
+            )
 
 
 def handle_requested_wave_missing(
@@ -495,6 +527,7 @@ def run_iverilog_backend(
     write_log(run_log, run_proc.stdout, run_proc.stderr)
 
     artifacts["wave_files"] = collect_wave_files(output_dir, wave_file)
+    enrich_wave_indexes(artifacts, args.wave_index)
     if wave_file is not None and not wave_file.exists():
         return handle_requested_wave_missing(
             args=args,
@@ -640,6 +673,7 @@ def run_xsim_backend(
     ensure_backend_log(run_log, run_proc.stdout, run_proc.stderr)
 
     artifacts["wave_files"] = collect_wave_files(output_dir, wave_file)
+    enrich_wave_indexes(artifacts, args.wave_index)
     if wave_file is not None and not wave_file.exists():
         return handle_requested_wave_missing(
             args=args,
