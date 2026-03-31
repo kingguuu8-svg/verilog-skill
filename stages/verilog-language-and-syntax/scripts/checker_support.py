@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import locale
 import re
 import shutil
 import subprocess
@@ -153,8 +154,32 @@ def make_stage_result(
     }
 
 
+def decode_stream(raw: bytes | None) -> str:
+    if not raw:
+        return ""
+
+    encodings: list[str] = []
+    for encoding in ("utf-8", locale.getpreferredencoding(False), "gbk", "cp936"):
+        if encoding and encoding not in encodings:
+            encodings.append(encoding)
+
+    for encoding in encodings:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+
+    return raw.decode("utf-8", errors="replace")
+
+
 def run_command(command: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+    proc = subprocess.run(command, capture_output=True, text=False, env=env, check=False)
+    return subprocess.CompletedProcess(
+        args=proc.args,
+        returncode=proc.returncode,
+        stdout=decode_stream(proc.stdout),
+        stderr=decode_stream(proc.stderr),
+    )
 
 
 def parse_command_file(source: Path) -> tuple[list[str], list[str], list[str], list[str], list[str]]:

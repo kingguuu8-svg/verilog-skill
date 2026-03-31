@@ -1,0 +1,46 @@
+`timescale 1ns / 1ps
+
+module tb_counter_wave;
+
+    logic clk = 1'b0;
+    logic rst_n = 1'b0;
+    logic en = 1'b0;
+    logic [3:0] count;
+    string wave_file;
+
+    counter_dut u_dut (
+        .clk(clk),
+        .rst_n(rst_n),
+        .en(en),
+        .count(count)
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+        if (!$value$plusargs("WAVE_FILE=%s", wave_file)) begin
+            if (!$value$plusargs("wave=%s", wave_file)) begin
+                wave_file = "tb_counter_wave.vcd";
+            end
+        end
+
+        $dumpfile(wave_file);
+        $dumpvars(0, tb_counter_wave);
+
+        $display("SIM_START tb_counter_wave");
+        repeat (2) @(posedge clk);
+        rst_n = 1'b1;
+        en = 1'b1;
+
+        repeat (4) @(posedge clk);
+        @(negedge clk);
+        if (count != 4'd4) begin
+            $display("SIM_FAIL count=%0d", count);
+            $fatal(1, "counter did not reach expected value");
+        end
+
+        $display("SIM_PASS count=%0d", count);
+        $finish;
+    end
+
+endmodule

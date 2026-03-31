@@ -88,6 +88,54 @@ The syntax-check side of stage 1 should:
 - report environment failures separately from HDL failures
 - avoid pretending unsupported language features are always user bugs
 
+## Stage-2 Definition
+
+The second stage is:
+
+`verilog-simulation-execution`
+
+Its job is not waveform analysis.
+Its real job is to execute bounded simulations and preserve the resulting artifacts.
+
+Stage 2 must contain these inseparable parts:
+
+1. simulation compile and runtime execution
+2. structured reporting for stdout, stderr, and emitted wave artifacts
+
+## Stage-2 Inputs
+
+Stage 2 should accept:
+
+- source files: `.v`, `.vh`, `.sv`, `.svh`
+- optional `.f` file lists
+- optional macro definitions
+- optional include directories
+- optional top-module hint
+- optional runtime plusargs
+- optional requested wave-file path
+
+## Stage-2 Outputs
+
+Stage 2 should produce:
+
+- compile/elaboration result
+- runtime result
+- simulator print output
+- compiled image path
+- log file paths
+- wave file paths
+- next-action hint
+
+## Stage-2 Execution Contract
+
+The simulation side of stage 2 should:
+
+- reuse the stage-1 compile baseline where practical
+- prefer mature external backends over custom simulation engines
+- keep artifact paths explicit
+- distinguish compile failures from runtime failures
+- report wave files without analyzing them
+
 ## Dependency Rule
 
 Later stages depend on stage 1.
@@ -96,15 +144,17 @@ Examples:
 
 - lint stage depends on stage-1 language mode
 - simulation stage depends on stage-1 compile baseline
+- waveform-debug stage depends on stage-2 emitted artifacts
 - debug stage depends on stage-1 normalized diagnostics
 
-Therefore stage 1 must be completed first and kept narrow.
+Therefore stage 1 must be completed first and kept narrow, and stage 2 must remain execution-focused.
 
-## Immediate Build Goal
+## Current Build Goal
 
-The immediate goal is to create a first-stage skill that teaches the AI:
+The current goal is to build the chain in bounded steps:
 
-- how to write the intended Verilog/SystemVerilog subset
-- how to check that subset with a real program
+1. teach the AI the intended Verilog/SystemVerilog subset
+2. execute simulations with a real backend
+3. only later add waveform-oriented debug or richer verification flows
 
-Only after that is stable should the repository add stage 2.
+Do not collapse those stages prematurely.

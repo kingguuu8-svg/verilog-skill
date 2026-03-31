@@ -44,12 +44,28 @@ Stage-1 documents live in:
 
 - [stages/verilog-language-and-syntax](stages/verilog-language-and-syntax)
 
+### Stage 2
+
+`verilog-simulation-execution`
+
+Responsibilities:
+
+- compile and elaborate module-style simulations
+- run testbenches with an existing mature backend
+- capture simulator print output
+- collect emitted waveform file paths
+
+This stage intentionally stops before waveform analysis.
+
+Stage-2 documents live in:
+
+- [stages/verilog-simulation-execution](stages/verilog-simulation-execution)
+
 ### Planned Later Stages
 
 Examples of later chain stages:
 
 - lint and style enforcement
-- simulation workflow
 - testbench construction
 - debug and waveform-oriented diagnosis
 - project packaging and delivery
@@ -86,18 +102,18 @@ The initial checker direction is:
 
 The checker exists to enforce the language contract, not to define it by itself.
 
-## Current Next Step
+## Current Chain State
 
-The next concrete output is not a generic all-in-one skill.
-It is the first stage specification:
+The current concrete outputs are:
 
-1. language requirements for AI code generation
-2. compatibility baseline and excluded constructs
-3. syntax-check program contract
-4. stage-1 skill definition
+1. stage-1 language and syntax enforcement
+2. stage-2 simulation execution
+
+The next likely bounded stage after this is waveform-oriented debug, not a larger simulation monolith.
 
 ## Repository Layout
 
 - [README.md](README.md): project-level entry
 - [skill-chain-architecture.md](skill-chain-architecture.md): chain-level structure
 - [stages/verilog-language-and-syntax](stages/verilog-language-and-syntax): first skill package
+- [stages/verilog-simulation-execution](stages/verilog-simulation-execution): second skill package

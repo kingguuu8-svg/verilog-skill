@@ -80,6 +80,7 @@ Use them to decide whether the task is primarily:
 
 Read [references/syntax-checker-contract.md](references/syntax-checker-contract.md) before changing checker behavior or interpreting checker output.
 Read [references/checker-usage.md](references/checker-usage.md) for the supported command-line surface and output model.
+Read [references/environment-setup.md](references/environment-setup.md) when you need to prepare the local checker environment, install repo-local tools, or diagnose backend discovery failures.
 Read [references/lint-checker-contract.md](references/lint-checker-contract.md) when extending or interpreting the optional lint layer.
 
 Use the scripts in [scripts/](scripts/) for executable stage-1 checking:
@@ -90,6 +91,14 @@ Use the scripts in [scripts/](scripts/) for executable stage-1 checking:
 - `scripts/check_syntax.py`
 - `scripts/check_lint.py`
 - `scripts/validate_skill.py`
+
+### 6. Use The Environment Dependency Index
+
+Use these files when environment constraints, tool discovery, or local setup become the blocker:
+
+- [references/environment-setup.md](references/environment-setup.md): environment prerequisites, repo-local install layout, bootstrap flow, and common failure diagnosis
+- [references/checker-usage.md](references/checker-usage.md): command-line entry points, backend discovery order, and JSON output shape
+- [references/syntax-checker-contract.md](references/syntax-checker-contract.md): environment failure categories and checker behavior constraints
 
 ## Generation Rules
 
