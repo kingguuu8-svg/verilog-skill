@@ -16,6 +16,7 @@ STAGE2_RUN = REPO_ROOT / "stages" / "verilog-simulation-execution" / "scripts" /
 OBSERVE_SCRIPT = SCRIPT_DIR / "observe_waveform.py"
 SESSION_SCRIPT = SCRIPT_DIR / "wave_session.py"
 SHELL_SCRIPT = SCRIPT_DIR / "wave_shell.py"
+BUILD_INDEX_SCRIPT = SCRIPT_DIR / "build_wave_index.py"
 FIXTURE_DIR = STAGE3_DIR / "fixtures"
 VALIDATE_ROOT = REPO_ROOT / ".tmp" / "verilog-waveform-observation" / "validate"
 STAGE2_SCRIPTS = REPO_ROOT / "stages" / "verilog-simulation-execution" / "scripts"
@@ -23,7 +24,7 @@ if str(STAGE2_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(STAGE2_SCRIPTS))
 
 from simulation_support import probe_xsim_backend  # noqa: E402
-from waveform_support import cached_export_is_valid, resolve_companion_vcd  # noqa: E402
+from waveform_support import cached_export_is_valid, resolve_companion_vcd, vcd_index_path  # noqa: E402
 
 
 def run_command(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -72,6 +73,20 @@ def main() -> int:
     if not wave_files:
         raise AssertionError("Stage-2 sample simulation did not emit a wave file")
     wave_file = wave_files[0]
+    build_index_payload = run_json(
+        [
+            sys.executable,
+            str(BUILD_INDEX_SCRIPT),
+            str(wave_file),
+            "--checkpoint-bytes",
+            "1024",
+        ]
+    )
+    index_file = Path(build_index_payload["index_file"])
+    if index_file != vcd_index_path(Path(wave_file)):
+        raise AssertionError("Wave index builder returned an unexpected sidecar path")
+    if not index_file.exists():
+        raise AssertionError("Wave index builder did not materialize the sidecar index file")
 
     escaped_fixture = FIXTURE_DIR / "escaped_identifier.vcd"
     escaped_catalog = run_json([sys.executable, str(OBSERVE_SCRIPT), "list-signals", str(escaped_fixture)])
@@ -180,6 +195,8 @@ def main() -> int:
         ]
     )
     rendered_lines = render_payload["rendered_text"]
+    if render_payload["wave_index"]["status"] != "used":
+        raise AssertionError("Indexed render did not report sidecar index usage")
     if not rendered_lines or not rendered_lines[0].startswith("0ps"):
         raise AssertionError("Anchor row was not rendered at the observation start")
     if not any("5000ps" in line and "clk: rise" in line and "tb_counter_wave.count: value_change xxxx->0000" in line for line in rendered_lines):
@@ -223,6 +240,8 @@ def main() -> int:
             "rise",
         ]
     )
+    if moved_payload["wave_index"]["status"] != "used":
+        raise AssertionError("Indexed session navigation did not report sidecar index usage")
     if moved_payload["render"]["anchor_time"] != "5000ps":
         raise AssertionError("Session navigation did not move to the next clk rise")
 

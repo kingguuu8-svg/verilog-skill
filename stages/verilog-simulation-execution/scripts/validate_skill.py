@@ -61,11 +61,15 @@ def main() -> int:
             str(pass_dir),
             "--wave-file",
             "counter.vcd",
+            "--wave-index",
+            "always",
         ],
         "ok",
         "ok",
     )
     require_wave_file(pass_payload, "pass_counter")
+    if not pass_payload["artifacts"]["wave_indexes"]:
+        raise AssertionError("pass_counter: expected at least one generated wave index")
     if "SIM_PASS" not in pass_payload["checks"]["run"]["stdout"]:
         raise AssertionError("pass_counter: expected SIM_PASS marker in runtime stdout")
 

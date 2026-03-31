@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import bisect
 import difflib
 import hashlib
 import json
@@ -27,6 +28,9 @@ TMP_ROOT = REPO_ROOT / ".tmp" / "verilog-waveform-observation"
 SESSION_ROOT = TMP_ROOT / "sessions"
 EXPORT_ROOT = TMP_ROOT / "exports"
 SUPPORTED_WAVE_SUFFIXES = {".vcd", ".wdb"}
+VCD_INDEX_FORMAT = "verilog-skill-vcd-index-v1"
+DEFAULT_VCD_INDEX_STRIDE_BYTES = 256 * 1024 * 1024
+VCD_INDEX_AUTO_MIN_BYTES = 64 * 1024 * 1024
 TIME_UNIT_TO_FS = {
     "fs": 1,
     "ps": 1_000,
@@ -234,6 +238,240 @@ def wave_cache_dir(wave_file: Path) -> Path:
     cache_dir = ensure_export_dir() / f"{safe_name(wave_file.stem)}-{digest}"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
+
+def vcd_index_path(wave_file: Path) -> Path:
+    return wave_file.with_name(f"{wave_file.name}idx")
+
+
+def parse_value_change_bytes(line: bytes) -> tuple[bytes, bytes] | None:
+    if not line:
+        return None
+    head = line[:1]
+    if head in {b"0", b"1", b"x", b"X", b"z", b"Z"}:
+        return line[1:].strip(), head.lower()
+    if head in {b"b", b"B"}:
+        parts = line[1:].split()
+        if len(parts) != 2:
+            return None
+        return parts[1], parts[0].lower()
+    return None
+
+
+def normalize_vector_value_bytes(raw_value: bytes, width: int) -> str:
+    lowered = raw_value.lower().decode("ascii", errors="ignore")
+    if width <= 1:
+        return lowered[0]
+    if len(lowered) >= width:
+        return lowered[-width:]
+    pad_char = lowered[0] if lowered and lowered[0] in {"x", "z"} else "0"
+    return (pad_char * (width - len(lowered))) + lowered
+
+
+def load_vcd_index(wave_file: Path) -> dict | None:
+    if wave_file.suffix.lower() != ".vcd":
+        return None
+    index_path = vcd_index_path(wave_file)
+    payload = load_json_file(index_path)
+    if payload is None:
+        return None
+    fingerprint = build_wave_fingerprint(wave_file)
+    if payload.get("format") != VCD_INDEX_FORMAT:
+        return None
+    if payload.get("wave_file") != fingerprint["wave_file"]:
+        return None
+    if payload.get("wave_size") != fingerprint["wave_size"]:
+        return None
+    if payload.get("wave_mtime_ns") != fingerprint["wave_mtime_ns"]:
+        return None
+    codes = payload.get("codes")
+    widths = payload.get("widths")
+    checkpoints = payload.get("checkpoints")
+    if not isinstance(codes, list) or not isinstance(widths, list) or len(codes) != len(widths):
+        return None
+    if not isinstance(checkpoints, list) or not checkpoints:
+        return None
+    for checkpoint in checkpoints:
+        if not isinstance(checkpoint, dict):
+            return None
+        values = checkpoint.get("values")
+        if not isinstance(values, list) or len(values) != len(codes):
+            return None
+    payload["index_file"] = str(index_path.resolve())
+    return payload
+
+
+def build_vcd_index(
+    wave_file: Path,
+    *,
+    force: bool = False,
+    checkpoint_stride_bytes: int = DEFAULT_VCD_INDEX_STRIDE_BYTES,
+) -> tuple[Path | None, dict | None]:
+    wave_file = wave_file.resolve()
+    if wave_file.suffix.lower() != ".vcd":
+        return None, make_error_payload(
+            status="unsupported_feature",
+            category="unsupported_wave_format",
+            message="Wave index generation currently supports VCD files only",
+            details={"wave_file": str(wave_file)},
+        )
+
+    existing = load_vcd_index(wave_file)
+    index_path = vcd_index_path(wave_file)
+    if existing is not None and not force:
+        return index_path, None
+
+    header, header_error = load_vcd_header(wave_file)
+    if header_error is not None:
+        return None, header_error
+
+    declarations = header["declarations"]
+    codes = [str(decl["code"]) for decl in declarations]
+    widths = [int(decl["width"]) for decl in declarations]
+    code_positions = {code: index for index, code in enumerate(codes)}
+    current_values = [unknown_value(width) for width in widths]
+    checkpoints: list[dict] = []
+    current_time = 0
+    header_done = False
+    header_end_offset: int | None = None
+    next_checkpoint_offset = max(checkpoint_stride_bytes, 1)
+
+    try:
+        with wave_file.open("rb") as handle:
+            while True:
+                raw_line = handle.readline()
+                if not raw_line:
+                    break
+                line = raw_line.strip()
+                current_offset = handle.tell()
+                if not line:
+                    continue
+                if not header_done:
+                    if line.startswith(b"$enddefinitions"):
+                        header_done = True
+                        header_end_offset = current_offset
+                        checkpoints.append(
+                            {
+                                "time_tick": current_time,
+                                "file_offset": header_end_offset,
+                                "values": list(current_values),
+                            }
+                        )
+                        while next_checkpoint_offset <= header_end_offset:
+                            next_checkpoint_offset += checkpoint_stride_bytes
+                    continue
+
+                if line.startswith(b"#"):
+                    current_time = int(line[1:])
+                elif not line.startswith(b"$"):
+                    parsed = parse_value_change_bytes(line)
+                    if parsed is not None:
+                        code_bytes, raw_value = parsed
+                        code = code_bytes.decode("ascii", errors="ignore")
+                        position = code_positions.get(code)
+                        if position is not None:
+                            current_values[position] = normalize_vector_value_bytes(raw_value, widths[position])
+
+                if current_offset >= next_checkpoint_offset:
+                    checkpoints.append(
+                        {
+                            "time_tick": current_time,
+                            "file_offset": current_offset,
+                            "values": list(current_values),
+                        }
+                    )
+                    while next_checkpoint_offset <= current_offset:
+                        next_checkpoint_offset += checkpoint_stride_bytes
+    except OSError as exc:
+        return None, make_error_payload(
+            status="input_error",
+            category="wave_file_read_failed",
+            message="Waveform file could not be indexed",
+            details={"wave_file": str(wave_file), "reason": str(exc)},
+        )
+
+    if header_end_offset is None:
+        return None, make_error_payload(
+            status="input_error",
+            category="invalid_wave_file",
+            message="VCD header ended unexpectedly before $enddefinitions",
+            details={"wave_file": str(wave_file)},
+        )
+
+    final_offset = wave_file.stat().st_size
+    if checkpoints[-1]["file_offset"] != final_offset:
+        checkpoints.append(
+            {
+                "time_tick": current_time,
+                "file_offset": final_offset,
+                "values": list(current_values),
+            }
+        )
+
+    fingerprint = build_wave_fingerprint(wave_file)
+    payload = {
+        "format": VCD_INDEX_FORMAT,
+        **fingerprint,
+        "timescale_text": header["timescale_text"],
+        "timescale_fs": int(header["timescale_fs"]),
+        "header_end_offset": header_end_offset,
+        "checkpoint_stride_bytes": checkpoint_stride_bytes,
+        "codes": codes,
+        "widths": widths,
+        "checkpoints": checkpoints,
+    }
+
+    temp_path = index_path.with_name(f"{index_path.name}.tmp")
+    try:
+        temp_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        temp_path.replace(index_path)
+    except OSError as exc:
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except OSError:
+            pass
+        return None, make_error_payload(
+            status="run_error",
+            category="wave_index_write_failed",
+            message="Waveform index could not be written",
+            details={"wave_file": str(wave_file), "index_file": str(index_path), "reason": str(exc)},
+        )
+
+    return index_path.resolve(), None
+
+
+def maybe_build_vcd_index(
+    wave_file: Path,
+    *,
+    mode: str,
+    checkpoint_stride_bytes: int = DEFAULT_VCD_INDEX_STRIDE_BYTES,
+) -> tuple[Path | None, dict | None]:
+    if wave_file.suffix.lower() != ".vcd":
+        return None, None
+    if mode == "never":
+        return None, None
+    if mode == "auto":
+        try:
+            if wave_file.stat().st_size < VCD_INDEX_AUTO_MIN_BYTES:
+                return None, None
+        except OSError as exc:
+            return None, make_error_payload(
+                status="input_error",
+                category="wave_file_read_failed",
+                message="Waveform file could not be inspected for index generation",
+                details={"wave_file": str(wave_file), "reason": str(exc)},
+            )
+    return build_vcd_index(wave_file, force=False, checkpoint_stride_bytes=checkpoint_stride_bytes)
+
+
+def resolve_index_checkpoint(index_payload: dict, anchor_ticks: int) -> dict:
+    checkpoints = index_payload["checkpoints"]
+    times = [int(checkpoint["time_tick"]) for checkpoint in checkpoints]
+    checkpoint_index = bisect.bisect_right(times, anchor_ticks) - 1
+    if checkpoint_index < 0:
+        checkpoint_index = 0
+    return checkpoints[checkpoint_index]
 
 
 def iter_snapshot_dirs(output_dir: Path) -> list[Path]:
@@ -639,14 +877,28 @@ def parse_selected_events(
     selected_codes: set[str],
     code_to_decl: dict[str, dict],
     *,
+    start_offset: int = 0,
+    initial_time: int = 0,
+    initial_values: dict[str, str] | None = None,
+    skip_header: bool = False,
     stop_after_ticks: int | None = None,
 ) -> dict[str, list[list[int | str]]]:
     events_by_code: dict[str, list[list[int | str]]] = {code: [] for code in selected_codes}
     last_values: dict[str, str] = {}
-    header_done = False
-    current_time = 0
+    header_done = skip_header
+    current_time = initial_time
+
+    if initial_values is not None:
+        for code, value in initial_values.items():
+            if code not in selected_codes:
+                continue
+            normalized = normalize_vector_value(value, int(code_to_decl[code]["width"]))
+            last_values[code] = normalized
+            events_by_code[code].append([current_time, normalized])
 
     with wave_file.open("r", encoding="utf-8", errors="replace") as handle:
+        if start_offset:
+            handle.seek(start_offset)
         for raw_line in handle:
             line = raw_line.strip()
             if not line:
@@ -676,6 +928,79 @@ def parse_selected_events(
             last_values[code] = normalized
 
     return events_by_code
+
+
+def load_events_for_session(
+    session: dict,
+    *,
+    stop_after_window: bool,
+    selected_codes: set[str] | None = None,
+) -> tuple[dict[str, list[list[int | str]]] | None, dict | None, dict]:
+    if selected_codes is None:
+        selected_codes = {item["code"] for item in session["selected_signals"]}
+
+    resolved_wave_file = Path(session.get("resolved_wave_file", session["wave_file"]))
+    stop_after_ticks = None
+    if stop_after_window:
+        stop_after_ticks = int(session["anchor_ticks"]) + int(session["window_ticks"])
+    code_to_decl = {
+        item["code"]: {"width": int(item["base_width"])}
+        for item in session["selected_signals"]
+        if item["code"] in selected_codes
+    }
+
+    start_offset = 0
+    initial_time = 0
+    initial_values: dict[str, str] | None = None
+    skip_header = False
+    wave_index_info = {
+        "status": "absent",
+        "index_file": None,
+        "checkpoint_time": None,
+        "checkpoint_offset": None,
+    }
+
+    index_payload = load_vcd_index(resolved_wave_file)
+    if index_payload is not None:
+        checkpoint = resolve_index_checkpoint(index_payload, int(session["anchor_ticks"]))
+        code_positions = {code: index for index, code in enumerate(index_payload["codes"])}
+        initial_values = {
+            code: str(checkpoint["values"][code_positions[code]])
+            for code in selected_codes
+            if code in code_positions
+        }
+        start_offset = int(checkpoint["file_offset"])
+        initial_time = int(checkpoint["time_tick"])
+        skip_header = True
+        wave_index_info = {
+            "status": "used",
+            "index_file": index_payload["index_file"],
+            "checkpoint_time": initial_time,
+            "checkpoint_offset": start_offset,
+        }
+
+    try:
+        events_by_code = parse_selected_events(
+            resolved_wave_file,
+            selected_codes,
+            code_to_decl,
+            start_offset=start_offset,
+            initial_time=initial_time,
+            initial_values=initial_values,
+            skip_header=skip_header,
+            stop_after_ticks=stop_after_ticks,
+        )
+    except OSError as exc:
+        return None, make_error_payload(
+            status="input_error",
+            category="wave_file_read_failed",
+            message="Waveform events could not be read",
+            details={
+                "wave_file": str(resolved_wave_file),
+                "reason": str(exc),
+            },
+        ), wave_index_info
+    return events_by_code, None, wave_index_info
 
 
 def list_signals(wave_file_text: str) -> dict:
@@ -1060,28 +1385,16 @@ def load_waveform_selection(
     if not include_events:
         return session, None
 
-    selected_codes = {item["code"] for item in selected_dicts}
-    stop_after_ticks = anchor_ticks + int(window_ticks) if stop_after_window else None
-    try:
-        events_by_code = parse_selected_events(
-            resolved_wave_file,
-            selected_codes,
-            header["code_to_decl"],
-            stop_after_ticks=stop_after_ticks,
-        )
-    except OSError as exc:
-        return None, make_error_payload(
-            status="input_error",
-            category="wave_file_read_failed",
-            message="Waveform events could not be read",
-            details={
-                "wave_file": str(resolved_wave_file),
-                "reason": str(exc),
-            },
-        )
-
+    events_by_code, event_error, wave_index_info = load_events_for_session(
+        session,
+        stop_after_window=stop_after_window,
+        selected_codes={item["code"] for item in selected_dicts},
+    )
+    if event_error is not None:
+        return None, event_error
     session["events_by_code"] = events_by_code
     session["session_storage"] = "embedded_events"
+    session["wave_index"] = wave_index_info
     return session, None
 
 
@@ -1094,39 +1407,17 @@ def hydrate_session_events(
     if "events_by_code" in session and selected_codes is None:
         return session, None
 
-    if selected_codes is None:
-        selected_codes = {item["code"] for item in session["selected_signals"]}
-
-    resolved_wave_file = Path(session.get("resolved_wave_file", session["wave_file"]))
-    stop_after_ticks = None
-    if stop_after_window:
-        stop_after_ticks = int(session["anchor_ticks"]) + int(session["window_ticks"])
-    code_to_decl = {
-        item["code"]: {"width": int(item["base_width"])}
-        for item in session["selected_signals"]
-        if item["code"] in selected_codes
-    }
-
-    try:
-        events_by_code = parse_selected_events(
-            resolved_wave_file,
-            selected_codes,
-            code_to_decl,
-            stop_after_ticks=stop_after_ticks,
-        )
-    except OSError as exc:
-        return None, make_error_payload(
-            status="input_error",
-            category="wave_file_read_failed",
-            message="Waveform events could not be read",
-            details={
-                "wave_file": str(resolved_wave_file),
-                "reason": str(exc),
-            },
-        )
+    events_by_code, event_error, wave_index_info = load_events_for_session(
+        session,
+        stop_after_window=stop_after_window,
+        selected_codes=selected_codes,
+    )
+    if event_error is not None:
+        return None, event_error
 
     hydrated = dict(session)
     hydrated["events_by_code"] = events_by_code
+    hydrated["wave_index"] = wave_index_info
     return hydrated, None
 
 
@@ -1139,20 +1430,29 @@ def make_render_payload(session: dict, message: str) -> tuple[dict | None, dict 
     return {
         "status": "ok",
         "message": message,
-        "wave_file": session["wave_file"],
-        "resolved_wave_file": session.get("resolved_wave_file", session["wave_file"]),
-        "wave_source": session.get(
+        "wave_file": render_session["wave_file"],
+        "resolved_wave_file": render_session.get("resolved_wave_file", render_session["wave_file"]),
+        "wave_source": render_session.get(
             "wave_source",
             {
-                "requested_wave_file": session["wave_file"],
-                "requested_format": Path(session["wave_file"]).suffix.lower(),
-                "resolved_wave_file": session.get("resolved_wave_file", session["wave_file"]),
-                "resolved_format": Path(session.get("resolved_wave_file", session["wave_file"])).suffix.lower(),
+                "requested_wave_file": render_session["wave_file"],
+                "requested_format": Path(render_session["wave_file"]).suffix.lower(),
+                "resolved_wave_file": render_session.get("resolved_wave_file", render_session["wave_file"]),
+                "resolved_format": Path(render_session.get("resolved_wave_file", render_session["wave_file"])).suffix.lower(),
                 "resolution": "direct",
             },
         ),
-        "timescale": session["timescale_text"],
-        "selected_signals": [item["display_name"] for item in session["selected_signals"]],
+        "timescale": render_session["timescale_text"],
+        "selected_signals": [item["display_name"] for item in render_session["selected_signals"]],
+        "wave_index": render_session.get(
+            "wave_index",
+            {
+                "status": "absent",
+                "index_file": None,
+                "checkpoint_time": None,
+                "checkpoint_offset": None,
+            },
+        ),
         "render": rendered,
         "rendered_text": render_rows_as_text(rows),
     }, None
@@ -1205,9 +1505,22 @@ def find_next_event(session: dict, signal_name: str, edge: str) -> tuple[int | N
         current_raw = default_value
         header_done = False
         current_time = 0
+        start_offset = 0
+        index_payload = load_vcd_index(resolved_wave_file)
+        if index_payload is not None:
+            checkpoint = resolve_index_checkpoint(index_payload, anchor_ticks)
+            code_positions = {code: index for index, code in enumerate(index_payload["codes"])}
+            code_position = code_positions.get(target["code"])
+            if code_position is not None:
+                current_raw = str(checkpoint["values"][code_position])
+                current_time = int(checkpoint["time_tick"])
+                start_offset = int(checkpoint["file_offset"])
+                header_done = True
 
         try:
             with resolved_wave_file.open("r", encoding="utf-8", errors="replace") as handle:
+                if start_offset:
+                    handle.seek(start_offset)
                 for raw_line in handle:
                     line = raw_line.strip()
                     if not line:
