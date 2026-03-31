@@ -50,11 +50,9 @@ For normal skill organization, `SKILL.md` and `references/` are the primary entr
 
 This repository uses `skill-creator` as the structural reference, not as a requirement to add platform-specific metadata files.
 
-Because these skills are not limited to Codex use:
-
-- do not add `agents/openai.yaml` by default
-- do not make skill usability depend on OpenAI-specific UI metadata
-- keep the skill content portable across environments that understand `SKILL.md` and repository resources
+Keep the skill content portable across environments that understand `SKILL.md` and repository resources.
+Do not add platform-specific metadata files by default.
+Do not make skill usability depend on one tool's UI metadata.
 
 ## Rule 3: Language Contract Before Tooling
 
