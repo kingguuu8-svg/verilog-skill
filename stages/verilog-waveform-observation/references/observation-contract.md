@@ -38,15 +38,22 @@ If anchor time is omitted, the observation starts at the waveform beginning.
 
 ## Supported Wave Format
 
-The initial supported waveform format is:
+The current supported waveform inputs are:
 
 - `.vcd`
+- `.wdb` from XSIM output directories
 
-This stage intentionally starts with VCD because:
+This stage still keeps VCD as the internal observation format because:
 
 - stage 2 already emits VCD naturally through common testbench `$dumpfile` flows
 - VCD is text-based and portable
-- stage 3 should avoid adding a new mandatory parser dependency before the contract is stable
+- stage 3 should avoid adding a new mandatory binary parser dependency before the contract is stable
+
+WDB support is intentionally bounded:
+
+- if a same-directory companion `.vcd` already exists, reuse it directly
+- otherwise replay the adjacent `xsim.dir/<snapshot>` once and cache a temporary VCD under `.tmp/verilog-waveform-observation/exports/`
+- if neither the companion VCD nor the adjacent XSIM snapshot exists, return an explicit context error
 
 If a caller provides `.fst`, `.lxt`, or other formats, the stage should return an explicit unsupported-format result instead of pretending the wave is unreadable for unknown reasons.
 
@@ -122,6 +129,7 @@ The stage is not complete enough for use unless there is a runnable validation p
 The minimal validation path should prove:
 
 - a real VCD can be loaded
+- a real XSIM WDB can be resolved into an observable VCD path when the XSIM toolchain is available
 - the signal catalog can be listed
 - the anchor row is always rendered
 - later change rows are rendered only on selected-signal changes

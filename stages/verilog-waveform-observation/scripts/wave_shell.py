@@ -27,7 +27,7 @@ HELP_TEXT = """Commands:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive shell for stage-3 waveform observation")
-    parser.add_argument("wave_file", help="Path to the VCD file")
+    parser.add_argument("wave_file", help="Path to the VCD or WDB file")
     parser.add_argument("--signals", nargs="+", required=True, help="Signal names to observe")
     parser.add_argument("--window", required=True, help="Observation window length")
     parser.add_argument("--anchor", help="Observation anchor time")

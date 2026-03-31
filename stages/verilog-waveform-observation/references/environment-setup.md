@@ -7,9 +7,9 @@ Stage 3 should add as little new environment dependency as possible.
 The baseline setup is:
 
 - Python available for the observation scripts
-- an existing `.vcd` waveform artifact
+- an existing waveform artifact, preferably from stage 2
 
-This stage does not require a new simulator backend.
+This stage does not require a new simulator backend when the input is already VCD.
 It consumes the wave artifact that stage 2 already produced.
 
 ## Recommended Upstream Path
@@ -31,6 +31,13 @@ That path already standardizes:
 Currently supported:
 
 - `.vcd`
+- `.wdb` from XSIM output directories
+
+WDB support is conditional:
+
+- a same-directory companion `.vcd` is enough by itself
+- otherwise the host needs a runnable Vivado `xsim` toolchain
+- the `.wdb` file must stay next to its `xsim.dir/<snapshot>` directory so stage 3 can replay it
 
 Currently not supported by default:
 
@@ -53,6 +60,12 @@ Session files are stored in:
 
 ```text
 .tmp/verilog-waveform-observation/sessions/
+```
+
+Cached WDB exports are stored in:
+
+```text
+.tmp/verilog-waveform-observation/exports/
 ```
 
 These session files are disposable runtime state.
@@ -79,14 +92,46 @@ Symptoms:
 
 Root cause:
 
-- the file is not a VCD
+- the file is not a supported VCD or XSIM WDB artifact
 
 Fix:
 
 - emit VCD from the testbench
 - or add a real portable conversion path before trying to use the stage-3 scripts on that format
 
-### 3. Ambiguous Signal Name
+### 3. Missing WDB Context
+
+Symptoms:
+
+- the observation script reports `missing_simulation_context`
+
+Root cause:
+
+- the input is `.wdb`, but neither a same-directory companion `.vcd` nor an adjacent `xsim.dir` snapshot is available
+
+Fix:
+
+- keep the full stage-2 XSIM output directory together
+- or pass the companion `.vcd` instead
+- or rerun stage 2 with `xsim` so the snapshot and wave artifact are regenerated together
+
+### 4. XSIM Replay Unavailable
+
+Symptoms:
+
+- the observation script reports `xsim_backend_unavailable`
+
+Root cause:
+
+- the input is `.wdb`, no companion VCD exists, and the local machine cannot run XSIM
+
+Fix:
+
+- install or expose the Vivado XSIM toolchain
+- or reuse the WDB on a machine that already has XSIM
+- or keep the companion VCD alongside the WDB so no replay is needed
+
+### 5. Ambiguous Signal Name
 
 Symptoms:
 
@@ -100,7 +145,7 @@ Fix:
 
 - rerun with a hierarchical path such as `tb_top.u_dut.valid`
 
-### 4. Edge On A Vector
+### 6. Edge On A Vector
 
 Symptoms:
 
@@ -124,4 +169,4 @@ Run the stage-3 validation path with:
 python stages/verilog-waveform-observation/scripts/validate_skill.py
 ```
 
-This validation path reuses stage-2 fixtures to generate a real VCD before reading it.
+This validation path reuses stage-2 fixtures to generate a real VCD and, when XSIM is available, a real WDB before reading them.

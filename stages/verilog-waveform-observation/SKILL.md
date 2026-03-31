@@ -1,6 +1,6 @@
 ---
 name: verilog-waveform-observation
-description: Observe emitted Verilog/SystemVerilog waveform artifacts as structured text windows. Use when Codex needs to inspect VCD files, list signal names, render selected signal values and rise/fall events over a time window, navigate to the next edge, or keep an interactive waveform observation session without opening a GUI waveform viewer.
+description: Observe emitted Verilog/SystemVerilog waveform artifacts as structured text windows. Use when Codex needs to inspect VCD files or XSIM WDB artifacts, list signal names, render selected signal values and rise/fall events over a time window, navigate to the next edge, or keep an interactive waveform observation session without opening a GUI waveform viewer.
 ---
 
 # Verilog Waveform Observation
@@ -25,6 +25,7 @@ Prefer the narrowest observation path that can answer:
 ## What This Skill Does
 
 - load a VCD waveform artifact
+- load an XSIM-emitted WDB artifact by reusing a companion VCD or replaying the adjacent snapshot
 - list available signal names
 - render one observation window as text
 - mark single-bit `rise` and `fall` events
@@ -88,12 +89,20 @@ When rendering waveform windows:
 
 ## Backend Direction
 
-The initial waveform input is fixed as:
+The current waveform input is:
 
 - supported file format:
   `VCD`
+- conditionally supported vendor artifact:
+  `WDB` from XSIM output directories
 
-Later support for FST/LXT can be added only when the repository has a portable parsing path.
+WDB support stays bounded by these rules:
+
+- prefer a same-directory companion `*.vcd` when it already exists
+- otherwise replay the adjacent `xsim.dir/<snapshot>` once to export a cached temporary VCD
+- do not parse the binary WDB format directly in stage 3
+
+Later support for FST/LXT can be added only when the repository has a portable parsing or conversion path.
 
 ## Output Expectation
 

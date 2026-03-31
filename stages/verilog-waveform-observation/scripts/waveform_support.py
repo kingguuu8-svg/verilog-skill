@@ -2,17 +2,31 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import re
 import secrets
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+STAGE1_SCRIPTS = REPO_ROOT / "stages" / "verilog-language-and-syntax" / "scripts"
+STAGE2_SCRIPTS = REPO_ROOT / "stages" / "verilog-simulation-execution" / "scripts"
+for script_dir in (STAGE1_SCRIPTS, STAGE2_SCRIPTS):
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
+
+from checker_support import decode_stream  # noqa: E402
+from simulation_support import build_vivado_runtime_env, probe_xsim_backend  # noqa: E402
+
+
 TMP_ROOT = REPO_ROOT / ".tmp" / "verilog-waveform-observation"
 SESSION_ROOT = TMP_ROOT / "sessions"
-SUPPORTED_WAVE_SUFFIXES = {".vcd"}
+EXPORT_ROOT = TMP_ROOT / "exports"
+SUPPORTED_WAVE_SUFFIXES = {".vcd", ".wdb"}
 TIME_UNIT_TO_FS = {
     "fs": 1,
     "ps": 1_000,
@@ -27,6 +41,17 @@ REFERENCE_RE = re.compile(
 BIT_SELECT_RE = re.compile(r"^(?P<base>.+)\[(?P<index>-?\d+)\]$")
 TIME_RE = re.compile(r"^(?P<value>\d+)(?P<unit>fs|ps|ns|us|ms|s)?$")
 TIMESCALE_RE = re.compile(r"^(?P<value>\d+)\s*(?P<unit>fs|ps|ns|us|ms|s)$")
+SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+@dataclass
+class ResolvedWaveSource:
+    requested_wave_file: str
+    requested_format: str
+    resolved_wave_file: str
+    resolved_format: str
+    resolution: str
+    conversion_log: str | None = None
 
 
 @dataclass
@@ -65,6 +90,12 @@ def ensure_session_dir() -> Path:
     return SESSION_ROOT
 
 
+def ensure_export_dir() -> Path:
+    ensure_temp_dir()
+    EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+    return EXPORT_ROOT
+
+
 def make_error_payload(
     *,
     status: str,
@@ -82,6 +113,19 @@ def make_error_payload(
     return payload
 
 
+def safe_name(text: str) -> str:
+    sanitized = SAFE_NAME_RE.sub("-", text.strip())
+    sanitized = sanitized.strip(".-_")
+    return sanitized or "wave"
+
+
+def build_wave_source_payload(source: ResolvedWaveSource) -> dict:
+    payload = asdict(source)
+    if payload["conversion_log"] is None:
+        payload.pop("conversion_log")
+    return payload
+
+
 def normalize_signal_tokens(raw_tokens: list[str]) -> list[str]:
     normalized: list[str] = []
     for token in raw_tokens:
@@ -92,7 +136,7 @@ def normalize_signal_tokens(raw_tokens: list[str]) -> list[str]:
     return normalized
 
 
-def resolve_wave_file(path_text: str) -> tuple[Path | None, dict | None]:
+def resolve_input_wave_path(path_text: str) -> tuple[Path | None, dict | None]:
     candidate = Path(path_text).expanduser()
     if not candidate.is_absolute():
         candidate = (Path.cwd() / candidate).resolve()
@@ -110,13 +154,235 @@ def resolve_wave_file(path_text: str) -> tuple[Path | None, dict | None]:
         return None, make_error_payload(
             status="unsupported_feature",
             category="unsupported_wave_format",
-            message="Stage-3 waveform observation currently supports VCD files only",
+            message="Stage-3 waveform observation supports VCD files and XSIM WDB artifacts only",
             details={
                 "wave_file": str(candidate),
                 "supported_suffixes": sorted(SUPPORTED_WAVE_SUFFIXES),
             },
         )
     return candidate, None
+
+
+def resolve_companion_vcd(wave_file: Path) -> Path | None:
+    companion = wave_file.with_suffix(".vcd")
+    if companion.exists():
+        return companion.resolve()
+    return None
+
+
+def wave_cache_dir(wave_file: Path) -> Path:
+    stat = wave_file.stat()
+    digest = hashlib.sha1(
+        f"{wave_file.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8")
+    ).hexdigest()[:12]
+    cache_dir = ensure_export_dir() / f"{safe_name(wave_file.stem)}-{digest}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def iter_snapshot_dirs(output_dir: Path) -> list[Path]:
+    xsim_dir = output_dir / "xsim.dir"
+    if not xsim_dir.exists():
+        return []
+
+    snapshot_dirs: list[Path] = []
+    for candidate in sorted(xsim_dir.iterdir()):
+        if not candidate.is_dir():
+            continue
+        has_image = (candidate / "xsimk.exe").exists() or (candidate / "xsimk").exists()
+        if not has_image:
+            continue
+        snapshot_dirs.append(candidate.resolve())
+    return snapshot_dirs
+
+
+def snapshot_script_matches_wdb(snapshot_dir: Path, wave_file: Path) -> bool:
+    script_path = snapshot_dir / "xsim_script.tcl"
+    if not script_path.exists():
+        return False
+    try:
+        script_text = script_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+    normalized_wdb = wave_file.resolve().as_posix()
+    return normalized_wdb in script_text or wave_file.name in script_text
+
+
+def resolve_snapshot_name_for_wdb(wave_file: Path) -> tuple[str | None, dict | None]:
+    snapshot_dirs = iter_snapshot_dirs(wave_file.parent)
+    if not snapshot_dirs:
+        return None, make_error_payload(
+            status="input_error",
+            category="missing_simulation_context",
+            message="WDB observation requires an adjacent xsim.dir snapshot directory or a companion VCD",
+            details={"wave_file": str(wave_file)},
+        )
+
+    matched = [directory.name for directory in snapshot_dirs if snapshot_script_matches_wdb(directory, wave_file)]
+    if len(matched) == 1:
+        return matched[0], None
+    if len(matched) > 1:
+        return None, make_error_payload(
+            status="input_error",
+            category="ambiguous_snapshot_context",
+            message="More than one XSIM snapshot matched the requested WDB artifact",
+            details={
+                "wave_file": str(wave_file),
+                "snapshot_candidates": matched,
+            },
+        )
+
+    preferred = f"{wave_file.stem}_behav"
+    snapshot_names = [directory.name for directory in snapshot_dirs]
+    if preferred in snapshot_names:
+        return preferred, None
+    if len(snapshot_names) == 1:
+        return snapshot_names[0], None
+
+    return None, make_error_payload(
+        status="input_error",
+        category="missing_simulation_context",
+        message="Could not determine which XSIM snapshot should be replayed for the requested WDB artifact",
+        details={
+            "wave_file": str(wave_file),
+            "snapshot_candidates": snapshot_names,
+        },
+    )
+
+
+def build_wdb_export_tcl(exported_vcd: Path) -> str:
+    return "\n".join(
+        [
+            "if {[catch {close_vcd} close_error]} {",
+            '    puts "stage3_notice: close_vcd skipped"',
+            "}",
+            f"open_vcd {{{exported_vcd.as_posix()}}}",
+            "log_vcd -level 0 /",
+            "run all",
+            "close_vcd",
+            "quit",
+            "",
+        ]
+    )
+
+
+def export_wdb_to_vcd(wave_file: Path) -> tuple[ResolvedWaveSource | None, dict | None]:
+    xsim_info = probe_xsim_backend()
+    if xsim_info["status"] != "ok":
+        return None, make_error_payload(
+            status="environment_error",
+            category="xsim_backend_unavailable",
+            message="WDB observation requires a runnable Vivado XSIM toolchain",
+            details={
+                "wave_file": str(wave_file),
+                "backend_probe": xsim_info,
+            },
+        )
+
+    snapshot_name, snapshot_error = resolve_snapshot_name_for_wdb(wave_file)
+    if snapshot_error is not None:
+        return None, snapshot_error
+
+    cache_dir = wave_cache_dir(wave_file)
+    exported_vcd = cache_dir / f"{wave_file.stem}.vcd"
+    export_log = cache_dir / "xsim-export.log"
+    export_tcl = cache_dir / "export_from_wdb.tcl"
+    metadata_path = cache_dir / "metadata.json"
+    if exported_vcd.exists() and exported_vcd.stat().st_size > 0:
+        return ResolvedWaveSource(
+            requested_wave_file=str(wave_file),
+            requested_format=wave_file.suffix.lower(),
+            resolved_wave_file=str(exported_vcd.resolve()),
+            resolved_format=".vcd",
+            resolution="xsim_snapshot_replay",
+            conversion_log=str(export_log.resolve()) if export_log.exists() else None,
+        ), None
+
+    export_tcl.write_text(build_wdb_export_tcl(exported_vcd), encoding="ascii")
+    command = [
+        xsim_info["backend_path"],
+        snapshot_name,
+        "--tclbatch",
+        export_tcl.as_posix(),
+        "--log",
+        str(export_log),
+    ]
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        text=False,
+        env=build_vivado_runtime_env(),
+        cwd=str(wave_file.parent.resolve()),
+        check=False,
+    )
+    stdout = decode_stream(proc.stdout)
+    stderr = decode_stream(proc.stderr)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "wave_file": str(wave_file.resolve()),
+                "snapshot_name": snapshot_name,
+                "command": command,
+                "returncode": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    if proc.returncode != 0 or not exported_vcd.exists() or exported_vcd.stat().st_size == 0:
+        return None, make_error_payload(
+            status="run_error",
+            category="wdb_export_failed",
+            message="XSIM snapshot replay did not produce a temporary VCD for the requested WDB artifact",
+            details={
+                "wave_file": str(wave_file),
+                "snapshot_name": snapshot_name,
+                "exported_vcd": str(exported_vcd),
+                "conversion_log": str(export_log),
+                "metadata_file": str(metadata_path),
+                "returncode": proc.returncode,
+            },
+        )
+
+    return ResolvedWaveSource(
+        requested_wave_file=str(wave_file),
+        requested_format=wave_file.suffix.lower(),
+        resolved_wave_file=str(exported_vcd.resolve()),
+        resolved_format=".vcd",
+        resolution="xsim_snapshot_replay",
+        conversion_log=str(export_log.resolve()),
+    ), None
+
+
+def resolve_wave_source(path_text: str) -> tuple[ResolvedWaveSource | None, dict | None]:
+    wave_file, wave_error = resolve_input_wave_path(path_text)
+    if wave_error is not None:
+        return None, wave_error
+
+    if wave_file.suffix.lower() == ".vcd":
+        return ResolvedWaveSource(
+            requested_wave_file=str(wave_file),
+            requested_format=".vcd",
+            resolved_wave_file=str(wave_file),
+            resolved_format=".vcd",
+            resolution="direct",
+        ), None
+
+    companion_vcd = resolve_companion_vcd(wave_file)
+    if companion_vcd is not None:
+        return ResolvedWaveSource(
+            requested_wave_file=str(wave_file),
+            requested_format=".wdb",
+            resolved_wave_file=str(companion_vcd),
+            resolved_format=".vcd",
+            resolution="companion_vcd",
+        ), None
+
+    return export_wdb_to_vcd(wave_file)
 
 
 def parse_timescale_text(text: str) -> tuple[str, int]:
@@ -309,11 +575,12 @@ def parse_selected_events(wave_file: Path, selected_codes: set[str], code_to_dec
 
 
 def list_signals(wave_file_text: str) -> dict:
-    wave_file, wave_error = resolve_wave_file(wave_file_text)
+    wave_source, wave_error = resolve_wave_source(wave_file_text)
     if wave_error is not None:
         return wave_error
 
-    header = parse_vcd_header(wave_file)
+    resolved_wave_file = Path(wave_source.resolved_wave_file)
+    header = parse_vcd_header(resolved_wave_file)
     signals: list[dict] = []
     for decl in header["declarations"]:
         signals.append(
@@ -327,7 +594,9 @@ def list_signals(wave_file_text: str) -> dict:
     return {
         "status": "ok",
         "message": "Waveform signal catalog loaded",
-        "wave_file": str(wave_file),
+        "wave_file": wave_source.requested_wave_file,
+        "resolved_wave_file": wave_source.resolved_wave_file,
+        "wave_source": build_wave_source_payload(wave_source),
         "timescale": header["timescale_text"],
         "signals": signals,
         "ambiguous_aliases": header["ambiguous_aliases"],
@@ -619,11 +888,12 @@ def load_waveform_selection(
     window_text: str,
     anchor_text: str | None,
 ) -> tuple[dict | None, dict | None]:
-    wave_file, wave_error = resolve_wave_file(wave_file_text)
+    wave_source, wave_error = resolve_wave_source(wave_file_text)
     if wave_error is not None:
         return None, wave_error
 
-    header = parse_vcd_header(wave_file)
+    resolved_wave_file = Path(wave_source.resolved_wave_file)
+    header = parse_vcd_header(resolved_wave_file)
     selected_signals, signal_error = resolve_selected_signals(header, signal_tokens)
     if signal_error is not None:
         return None, signal_error
@@ -648,10 +918,12 @@ def load_waveform_selection(
 
     selected_dicts = [asdict(item) for item in selected_signals]
     selected_codes = {item["code"] for item in selected_dicts}
-    events_by_code = parse_selected_events(wave_file, selected_codes, header["code_to_decl"])
+    events_by_code = parse_selected_events(resolved_wave_file, selected_codes, header["code_to_decl"])
 
     session = {
-        "wave_file": str(wave_file),
+        "wave_file": wave_source.requested_wave_file,
+        "resolved_wave_file": wave_source.resolved_wave_file,
+        "wave_source": build_wave_source_payload(wave_source),
         "timescale_text": header["timescale_text"],
         "timescale_fs": int(header["timescale_fs"]),
         "selected_signals": selected_dicts,
@@ -669,6 +941,17 @@ def make_render_payload(session: dict, message: str) -> dict:
         "status": "ok",
         "message": message,
         "wave_file": session["wave_file"],
+        "resolved_wave_file": session.get("resolved_wave_file", session["wave_file"]),
+        "wave_source": session.get(
+            "wave_source",
+            {
+                "requested_wave_file": session["wave_file"],
+                "requested_format": Path(session["wave_file"]).suffix.lower(),
+                "resolved_wave_file": session.get("resolved_wave_file", session["wave_file"]),
+                "resolved_format": Path(session.get("resolved_wave_file", session["wave_file"])).suffix.lower(),
+                "resolution": "direct",
+            },
+        ),
         "timescale": session["timescale_text"],
         "selected_signals": [item["display_name"] for item in session["selected_signals"]],
         "render": rendered,

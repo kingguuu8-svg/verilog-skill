@@ -6,6 +6,7 @@ List canonical signal names first when the exact path is unclear:
 
 ```text
 python scripts/observe_waveform.py list-signals <wave_file.vcd>
+python scripts/observe_waveform.py list-signals <wave_file.wdb>
 ```
 
 This returns:
@@ -14,6 +15,7 @@ This returns:
 - canonical signal names
 - widths
 - ambiguous short aliases
+- the resolved observation source, for example direct VCD, companion VCD, or XSIM snapshot replay
 
 ## One-Shot Window Rendering
 
@@ -21,6 +23,7 @@ Render a bounded observation window without creating a session:
 
 ```text
 python scripts/observe_waveform.py render-window <wave_file.vcd> --signals clk rst_n tb_top.count --window 30000ps --anchor 0ps
+python scripts/observe_waveform.py render-window <wave_file.wdb> --signals tb_top.src_clk tb_top.dst_clk tb_top.valid --window 50000ps --anchor 100000ps
 ```
 
 Rules:
@@ -35,6 +38,7 @@ Open a reusable session:
 
 ```text
 python scripts/wave_session.py open <wave_file.vcd> --signals clk rst_n tb_top.count --window 30000ps --anchor 0ps
+python scripts/wave_session.py open <wave_file.wdb> --signals tb_top.src_clk tb_top.dst_valid --window 50000ps --anchor 100000ps
 ```
 
 Render the current window again:
@@ -69,6 +73,7 @@ For human-operated terminal browsing, use:
 
 ```text
 python scripts/wave_shell.py <wave_file.vcd> --signals clk rst_n tb_top.count --window 30000ps --anchor 0ps
+python scripts/wave_shell.py <wave_file.wdb> --signals tb_top.src_clk tb_top.dst_valid --window 50000ps --anchor 100000ps
 ```
 
 Supported shell commands:
@@ -117,3 +122,11 @@ Conventions:
 - single-bit `1 -> 0` prints `fall`
 - all other changes print `value_change old->new`
 - unchanged signals print only their current value
+
+## WDB Notes
+
+When the input is `.wdb`:
+
+- stage 3 first looks for a same-directory companion `.vcd`
+- if none exists, it replays the adjacent XSIM snapshot once and caches a temporary VCD
+- the rendered output still follows the same text contract, because the observation engine always runs on the resolved VCD

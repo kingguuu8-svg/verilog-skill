@@ -68,6 +68,7 @@ Stage-2 documents live in:
 Responsibilities:
 
 - load emitted VCD waveform artifacts
+- observe XSIM WDB artifacts by reusing a companion VCD or replaying the adjacent snapshot
 - list canonical signal names
 - render anchor-based observation windows as text
 - navigate to the next selected edge or value change

@@ -13,14 +13,14 @@ from waveform_support import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Stage-3 waveform observation for VCD artifacts")
+    parser = argparse.ArgumentParser(description="Stage-3 waveform observation for VCD and XSIM WDB artifacts")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    list_parser = subparsers.add_parser("list-signals", help="List canonical signal names found in a VCD")
-    list_parser.add_argument("wave_file", help="Path to the VCD file")
+    list_parser = subparsers.add_parser("list-signals", help="List canonical signal names found in a waveform artifact")
+    list_parser.add_argument("wave_file", help="Path to the VCD or WDB file")
 
-    render_parser = subparsers.add_parser("render-window", help="Render one observation window from a VCD")
-    render_parser.add_argument("wave_file", help="Path to the VCD file")
+    render_parser = subparsers.add_parser("render-window", help="Render one observation window from a waveform artifact")
+    render_parser.add_argument("wave_file", help="Path to the VCD or WDB file")
     render_parser.add_argument("--signals", nargs="+", required=True, help="Signal names to observe")
     render_parser.add_argument("--window", required=True, help="Observation window length")
     render_parser.add_argument("--anchor", help="Observation anchor time")

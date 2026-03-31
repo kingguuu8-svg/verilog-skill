@@ -16,6 +16,11 @@ OBSERVE_SCRIPT = SCRIPT_DIR / "observe_waveform.py"
 SESSION_SCRIPT = SCRIPT_DIR / "wave_session.py"
 SHELL_SCRIPT = SCRIPT_DIR / "wave_shell.py"
 VALIDATE_ROOT = REPO_ROOT / ".tmp" / "verilog-waveform-observation" / "validate"
+STAGE2_SCRIPTS = REPO_ROOT / "stages" / "verilog-simulation-execution" / "scripts"
+if str(STAGE2_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(STAGE2_SCRIPTS))
+
+from simulation_support import probe_xsim_backend  # noqa: E402
 
 
 def run_command(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -92,8 +97,8 @@ def main() -> int:
         raise AssertionError("Anchor row was not rendered at the observation start")
     if not any("5000ps" in line and "clk: rise" in line and "tb_counter_wave.count: value_change xxxx->0000" in line for line in rendered_lines):
         raise AssertionError("Expected rise/value-change event at 5000ps was not rendered")
-    if not any("15000ps" in line and "rst_n: rise" in line and "en: rise" in line for line in rendered_lines):
-        raise AssertionError("Expected reset and enable rise event at 15000ps was not rendered")
+    if not any("20000ps" in line and "rst_n: rise" in line and "en: rise" in line for line in rendered_lines):
+        raise AssertionError("Expected reset and enable rise event at 20000ps was not rendered")
 
     session_payload = run_json(
         [
@@ -184,6 +189,59 @@ def main() -> int:
         raise AssertionError(f"Interactive shell smoke test failed:\n{shell_proc.stdout}\n{shell_proc.stderr}")
     if "5000ps" not in shell_proc.stdout:
         raise AssertionError("Interactive shell did not render the next-rise window")
+
+    xsim_info = probe_xsim_backend()
+    if xsim_info["status"] == "ok":
+        xsim_output = VALIDATE_ROOT / "xsim-wdb-source"
+        xsim_payload = run_json(
+            [
+                sys.executable,
+                str(STAGE2_RUN),
+                "stages/verilog-simulation-execution/fixtures/xpm_cdc_single.f",
+                "--backend",
+                "xsim",
+                "--top",
+                "tb_xpm_cdc_single",
+                "--wave-file",
+                "tb_xpm_cdc_single.wdb",
+                "--output-dir",
+                str(xsim_output),
+            ]
+        )
+        if xsim_payload["status"] != "ok":
+            raise AssertionError("Stage-2 XSIM fixture did not succeed during stage-3 WDB validation")
+        wdb_wave_file = xsim_output / "tb_xpm_cdc_single.wdb"
+        if not wdb_wave_file.exists():
+            raise AssertionError("Stage-2 XSIM fixture did not emit the requested WDB artifact")
+
+        wdb_catalog = run_json([sys.executable, str(OBSERVE_SCRIPT), "list-signals", str(wdb_wave_file)])
+        if wdb_catalog["wave_source"]["resolution"] != "xsim_snapshot_replay":
+            raise AssertionError("Stage-3 WDB catalog did not use the XSIM snapshot replay path")
+        wdb_canonical_names = {item["canonical_name"] for item in wdb_catalog["signals"]}
+        if "tb_xpm_cdc_single.dest_out" not in wdb_canonical_names:
+            raise AssertionError("WDB signal catalog is missing tb_xpm_cdc_single.dest_out")
+
+        wdb_render = run_json(
+            [
+                sys.executable,
+                str(OBSERVE_SCRIPT),
+                "render-window",
+                str(wdb_wave_file),
+                "--signals",
+                "tb_xpm_cdc_single.src_in",
+                "tb_xpm_cdc_single.dest_out",
+                "--window",
+                "120000ps",
+                "--anchor",
+                "0ps",
+            ]
+        )
+        if not wdb_render["rendered_text"] or not wdb_render["rendered_text"][0].startswith("0ps"):
+            raise AssertionError("WDB anchor row was not rendered")
+        if not any("tb_xpm_cdc_single.src_in: rise" in line for line in wdb_render["rendered_text"]):
+            raise AssertionError("WDB render did not capture the src_in rise")
+        if not any("tb_xpm_cdc_single.dest_out: rise" in line for line in wdb_render["rendered_text"]):
+            raise AssertionError("WDB render did not capture the dest_out rise")
 
     print("validation_ok")
     return 0

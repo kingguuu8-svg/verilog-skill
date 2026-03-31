@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     open_parser = subparsers.add_parser("open", help="Open a waveform observation session")
-    open_parser.add_argument("wave_file", help="Path to the VCD file")
+    open_parser.add_argument("wave_file", help="Path to the VCD or WDB file")
     open_parser.add_argument("--signals", nargs="+", required=True, help="Signal names to observe")
     open_parser.add_argument("--window", required=True, help="Observation window length")
     open_parser.add_argument("--anchor", help="Observation anchor time")

@@ -175,6 +175,7 @@ Stage 3 should produce:
 The waveform side of stage 3 should:
 
 - reuse stage-2 emitted artifacts instead of re-running simulation by default
+- accept VCD directly and treat XSIM WDB as a bounded conversion input, not a new binary parsing project
 - print the anchor time even when no signal changes there
 - treat rise/fall as single-bit concepts only
 - treat vectors as values or value changes
