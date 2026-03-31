@@ -123,7 +123,7 @@ Stage 2 should produce:
 - simulator print output
 - compiled image path
 - log file paths
-- wave file paths
+- wave file paths, including simulator-native artifacts such as `WDB`
 - next-action hint
 
 ## Stage-2 Execution Contract
@@ -132,6 +132,7 @@ The simulation side of stage 2 should:
 
 - reuse the stage-1 compile baseline where practical
 - prefer mature external backends over custom simulation engines
+- keep a default portable backend and allow optional vendor backends when the design requires them
 - keep artifact paths explicit
 - distinguish compile failures from runtime failures
 - report wave files without analyzing them

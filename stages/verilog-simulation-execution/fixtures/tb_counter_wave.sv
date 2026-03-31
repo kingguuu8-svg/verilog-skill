@@ -6,7 +6,9 @@ module tb_counter_wave;
     logic rst_n = 1'b0;
     logic en = 1'b0;
     logic [3:0] count;
-    string wave_file;
+    string wave_file = "tb_counter_wave.vcd";
+    bit wave_arg_seen;
+    bit legacy_wave_arg_seen;
 
     counter_dut u_dut (
         .clk(clk),
@@ -18,17 +20,15 @@ module tb_counter_wave;
     always #5 clk = ~clk;
 
     initial begin
-        if (!$value$plusargs("WAVE_FILE=%s", wave_file)) begin
-            if (!$value$plusargs("wave=%s", wave_file)) begin
-                wave_file = "tb_counter_wave.vcd";
-            end
-        end
+        wave_arg_seen = $value$plusargs("WAVE_FILE=%s", wave_file);
+        legacy_wave_arg_seen = $value$plusargs("wave=%s", wave_file);
 
         $dumpfile(wave_file);
         $dumpvars(0, tb_counter_wave);
 
         $display("SIM_START tb_counter_wave");
         repeat (2) @(posedge clk);
+        @(negedge clk);
         rst_n = 1'b1;
         en = 1'b1;
 

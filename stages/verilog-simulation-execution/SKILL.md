@@ -1,6 +1,6 @@
 ---
 name: verilog-simulation-execution
-description: Execute stage-2 Verilog/SystemVerilog simulations with mature existing tools, capture simulator print output, and collect generated waveform files without analyzing them. Use when Codex needs to compile and run module-style testbenches, drive Icarus Verilog plus vvp, gather stdout/stderr, or verify that a simulation emitted expected VCD/FST/LXT artifacts.
+description: Execute stage-2 Verilog/SystemVerilog simulations with mature existing tools, capture simulator print output, and collect generated waveform files without analyzing them. Use when Codex needs to compile and run module-style testbenches with `iverilog/vvp` or optional Vivado `xsim`, gather stdout/stderr, or verify that a simulation emitted expected `VCD` or `WDB` artifacts.
 ---
 
 # Verilog Simulation Execution
@@ -26,6 +26,7 @@ Prefer the narrowest execution path that can answer:
 
 - compile and elaborate simulation inputs with `iverilog`
 - execute the compiled simulation with `vvp`
+- optionally compile, elaborate, and run with Vivado `xvlog/xelab/xsim`
 - capture stdout and stderr
 - record compiled image, log files, and waveform file paths
 - distinguish compile failures from runtime failures
@@ -59,7 +60,9 @@ Stage 2 depends on stage 1 for:
 Read [references/environment-setup.md](references/environment-setup.md) when you need to:
 
 - prepare `iverilog` and `vvp`
+- prepare optional Vivado `xsim`
 - bootstrap repo-local Icarus tools
+- bootstrap repo-local Vivado tools
 - diagnose missing runtime backends
 
 ### 4. Use The Execution Interface
@@ -75,7 +78,7 @@ Use the scripts in [scripts/](scripts/) for executable stage-2 work:
 
 When running simulations:
 
-- prefer the repo-local Icarus toolchain first
+- prefer repo-local toolchains first
 - keep output artifacts in a deterministic output directory
 - capture both compile and run logs
 - treat missing wave output as a real failure when a wave file was explicitly requested
@@ -83,14 +86,19 @@ When running simulations:
 
 ## Backend Direction
 
-The initial simulation backend is fixed as:
+The stage currently supports:
 
-- compile and elaborate:
-  `iverilog`
-- execute:
-  `vvp`
+- default open-source path:
+  `iverilog` + `vvp`
+- optional vendor path:
+  `xvlog` + `xelab` + `xsim`
 
-This stage should prefer existing mature tools over custom simulation wrappers.
+Use the narrowest mature backend that can answer the question.
+
+Prefer:
+
+- `iverilog/vvp` for portable module-style testbenches
+- `xsim` when the design or testbench depends on Xilinx/XPM simulation support
 
 ## Output Expectation
 

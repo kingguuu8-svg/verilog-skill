@@ -12,8 +12,8 @@ It does not define HDL language legality.
 Stage 2 covers:
 
 - simulation input normalization
-- compile and elaboration with `iverilog`
-- simulation runtime with `vvp`
+- compile and elaboration with `iverilog` or optional Vivado `xvlog/xelab`
+- simulation runtime with `vvp` or optional Vivado `xsim`
 - stdout and stderr capture
 - wave artifact reporting
 - structured results for compile and run phases
@@ -24,21 +24,22 @@ Stage 2 does not cover:
 - debug root-cause analysis from waveforms
 - UVM orchestration
 - coverage closure
-- vendor-library automation
 - multi-backend comparison scheduling
 
 ## Backend Contract
 
-The initial backend pair is:
+The current backends are:
 
-1. `iverilog`
-2. `vvp`
+1. default:
+   `iverilog` + `vvp`
+2. optional:
+   `xvlog` + `xelab` + `xsim`
 
 Reason:
 
-- they are mature and widely used for open-source RTL simulation
-- they align with the stage-1 compile baseline
-- they are sufficient for module-style testbenches and emitted VCD-style waveforms
+- `iverilog/vvp` is mature, portable, and aligned with the stage-1 open baseline
+- `xsim` covers vendor-backed Xilinx and XPM simulation scenarios that the open baseline cannot execute reliably
+- both paths preserve the same stage boundary: execute simulation, capture output, report artifacts
 
 ## Input Contract
 
@@ -52,6 +53,8 @@ The runner should accept:
 - optional top-module hint
 - optional runtime plusargs
 - optional explicit wave file request
+
+`xsim` requires an explicit `--top` because `xelab` must build a named snapshot.
 
 ## Output Contract
 
@@ -71,6 +74,7 @@ Artifacts should include at minimum:
 - output directory
 - compiled simulation image path
 - compile log path
+- elaborate log path when the backend has a distinct elaboration step
 - run log path
 - wave file paths that were actually emitted
 
@@ -80,8 +84,9 @@ If the simulator exits zero but the testbench prints explicit failure markers su
 
 - `SIM_FAIL`
 - `[FAIL]`
+- `FAIL:`
 - `FINAL RESULT: FAILED`
-- runtime `ERROR:` lines
+- runtime `ERROR:` lines, including timestamp-prefixed forms like `[123] ERROR: ...`
 
 the stage should still classify the run as `run_error`.
 
@@ -106,6 +111,11 @@ If the caller explicitly requests a wave file path, the stage should verify that
 
 If no wave file was requested, the stage should still report any waveform artifacts it finds in the output directory.
 
+The current artifact set includes at least:
+
+- `VCD`
+- `WDB`
+
 ## Dependency Rule
 
 Stage 2 assumes the stage-1 language contract still applies.
@@ -120,3 +130,5 @@ The current stage should validate at least:
 - a passing simulation that emits a wave file
 - a runtime failure path that is classified separately from compile failure
 - a runtime failure path where the simulator exits zero but the testbench logs explicit failure markers
+- an optional `xsim` path that proves `WDB` capture when Vivado is available
+- an optional `xsim` path that proves auto-attached XPM sources when Vivado is available

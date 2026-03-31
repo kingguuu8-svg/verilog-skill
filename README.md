@@ -53,7 +53,7 @@ Responsibilities:
 - compile and elaborate module-style simulations
 - run testbenches with an existing mature backend
 - capture simulator print output
-- collect emitted waveform file paths
+- collect emitted waveform file paths, including `VCD` and `WDB`
 
 This stage intentionally stops before waveform analysis.
 
@@ -127,6 +127,11 @@ The current concrete outputs are:
 1. stage-1 language and syntax enforcement
 2. stage-2 simulation execution
 3. stage-3 waveform observation
+
+Current stage-2 backend split:
+
+- default portable path: `iverilog` + `vvp`
+- optional vendor path: Vivado `xvlog` + `xelab` + `xsim`
 
 The next likely bounded stage after this is waveform-oriented diagnosis, not a larger simulation monolith.
 

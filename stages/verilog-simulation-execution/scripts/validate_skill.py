@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from simulation_support import probe_xsim_backend
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_SCRIPT = SCRIPT_DIR / "run_simulation.py"
@@ -36,6 +38,11 @@ def run_case(name: str, args: list[str], expected_status: str, expected_run_stat
     return payload
 
 
+def require_wave_file(payload: dict, marker: str) -> None:
+    if not payload["artifacts"]["wave_files"]:
+        raise AssertionError(f"{marker}: expected at least one wave file")
+
+
 def main() -> int:
     if VALIDATION_ROOT.exists():
         shutil.rmtree(VALIDATION_ROOT)
@@ -58,8 +65,7 @@ def main() -> int:
         "ok",
         "ok",
     )
-    if not pass_payload["artifacts"]["wave_files"]:
-        raise AssertionError("pass_counter: expected at least one wave file")
+    require_wave_file(pass_payload, "pass_counter")
     if "SIM_PASS" not in pass_payload["checks"]["run"]["stdout"]:
         raise AssertionError("pass_counter: expected SIM_PASS marker in runtime stdout")
 
@@ -96,6 +102,29 @@ def main() -> int:
     )
     if "FINAL RESULT: FAILED" not in soft_fail_payload["checks"]["run"]["stdout"]:
         raise AssertionError("soft_fail_runtime: expected FINAL RESULT: FAILED marker in runtime stdout")
+
+    xsim_probe = probe_xsim_backend()
+    if xsim_probe["status"] == "ok":
+        xpm_dir = VALIDATION_ROOT / "xpm"
+        xpm_payload = run_case(
+            "xpm_cdc_single",
+            [
+                str(FIXTURES_DIR / "xpm_cdc_single.f"),
+                "--backend",
+                "xsim",
+                "--top",
+                "tb_xpm_cdc_single",
+                "--output-dir",
+                str(xpm_dir),
+                "--wave-file",
+                "xpm_cdc_single.wdb",
+            ],
+            "ok",
+            "ok",
+        )
+        require_wave_file(xpm_payload, "xpm_cdc_single")
+        if "SIM_PASS" not in xpm_payload["checks"]["run"]["stdout"]:
+            raise AssertionError("xpm_cdc_single: expected SIM_PASS marker in runtime stdout")
 
     print("validation_ok")
     return 0
