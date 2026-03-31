@@ -136,6 +136,50 @@ The simulation side of stage 2 should:
 - distinguish compile failures from runtime failures
 - report wave files without analyzing them
 
+## Stage-3 Definition
+
+The third stage is:
+
+`verilog-waveform-observation`
+
+Its job is not debug diagnosis.
+Its real job is to make emitted waveform artifacts queryable in bounded text windows.
+
+Stage 3 must contain these inseparable parts:
+
+1. waveform signal selection and window rendering
+2. session-style navigation to the next relevant event
+
+## Stage-3 Inputs
+
+Stage 3 should accept:
+
+- waveform file path
+- selected signal names
+- window length
+- optional anchor time
+
+## Stage-3 Outputs
+
+Stage 3 should produce:
+
+- signal catalog when needed
+- rendered anchor row
+- rendered change rows inside the selected window
+- updated anchor time after navigation
+- next-action hint when a signal is ambiguous or an edge does not exist
+
+## Stage-3 Observation Contract
+
+The waveform side of stage 3 should:
+
+- reuse stage-2 emitted artifacts instead of re-running simulation by default
+- print the anchor time even when no signal changes there
+- treat rise/fall as single-bit concepts only
+- treat vectors as values or value changes
+- preserve signal order across every rendered row
+- keep navigation state explicit instead of hiding it in a GUI
+
 ## Dependency Rule
 
 Later stages depend on stage 1.
@@ -144,10 +188,11 @@ Examples:
 
 - lint stage depends on stage-1 language mode
 - simulation stage depends on stage-1 compile baseline
-- waveform-debug stage depends on stage-2 emitted artifacts
+- waveform observation stage depends on stage-2 emitted artifacts
+- waveform diagnosis stage depends on stage-3 rendered observations or the same raw artifacts
 - debug stage depends on stage-1 normalized diagnostics
 
-Therefore stage 1 must be completed first and kept narrow, and stage 2 must remain execution-focused.
+Therefore stage 1 must be completed first and kept narrow, stage 2 must remain execution-focused, and stage 3 must remain observation-focused.
 
 ## Current Build Goal
 
@@ -155,6 +200,7 @@ The current goal is to build the chain in bounded steps:
 
 1. teach the AI the intended Verilog/SystemVerilog subset
 2. execute simulations with a real backend
-3. only later add waveform-oriented debug or richer verification flows
+3. observe waveform artifacts without a GUI dependency
+4. only later add waveform-oriented diagnosis or richer verification flows
 
 Do not collapse those stages prematurely.

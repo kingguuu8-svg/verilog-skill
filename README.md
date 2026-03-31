@@ -61,13 +61,31 @@ Stage-2 documents live in:
 
 - [stages/verilog-simulation-execution](stages/verilog-simulation-execution)
 
+### Stage 3
+
+`verilog-waveform-observation`
+
+Responsibilities:
+
+- load emitted VCD waveform artifacts
+- list canonical signal names
+- render anchor-based observation windows as text
+- navigate to the next selected edge or value change
+- keep an optional interactive observation session alive in the terminal
+
+This stage intentionally stops before waveform diagnosis.
+
+Stage-3 documents live in:
+
+- [stages/verilog-waveform-observation](stages/verilog-waveform-observation)
+
 ### Planned Later Stages
 
 Examples of later chain stages:
 
 - lint and style enforcement
 - testbench construction
-- debug and waveform-oriented diagnosis
+- waveform-oriented diagnosis
 - project packaging and delivery
 
 These are not the current first target.
@@ -108,8 +126,9 @@ The current concrete outputs are:
 
 1. stage-1 language and syntax enforcement
 2. stage-2 simulation execution
+3. stage-3 waveform observation
 
-The next likely bounded stage after this is waveform-oriented debug, not a larger simulation monolith.
+The next likely bounded stage after this is waveform-oriented diagnosis, not a larger simulation monolith.
 
 ## Repository Layout
 
@@ -117,3 +136,4 @@ The next likely bounded stage after this is waveform-oriented debug, not a large
 - [skill-chain-architecture.md](skill-chain-architecture.md): chain-level structure
 - [stages/verilog-language-and-syntax](stages/verilog-language-and-syntax): first skill package
 - [stages/verilog-simulation-execution](stages/verilog-simulation-execution): second skill package
+- [stages/verilog-waveform-observation](stages/verilog-waveform-observation): third skill package
