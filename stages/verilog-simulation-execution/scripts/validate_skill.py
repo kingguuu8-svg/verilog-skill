@@ -43,6 +43,7 @@ def main() -> int:
 
     pass_dir = VALIDATION_ROOT / "pass"
     fail_dir = VALIDATION_ROOT / "fail"
+    soft_fail_dir = VALIDATION_ROOT / "soft-fail"
     pass_payload = run_case(
         "pass_counter",
         [
@@ -78,6 +79,23 @@ def main() -> int:
     )
     if "SIM_FAIL" not in fail_payload["checks"]["run"]["stdout"]:
         raise AssertionError("fail_runtime: expected SIM_FAIL marker in runtime stdout")
+
+    soft_fail_payload = run_case(
+        "soft_fail_runtime",
+        [
+            str(FIXTURES_DIR / "soft_fail_runtime.f"),
+            "--top",
+            "tb_runtime_soft_fail",
+            "--output-dir",
+            str(soft_fail_dir),
+            "--wave-file",
+            "runtime_soft_fail.vcd",
+        ],
+        "run_error",
+        "run_error",
+    )
+    if "FINAL RESULT: FAILED" not in soft_fail_payload["checks"]["run"]["stdout"]:
+        raise AssertionError("soft_fail_runtime: expected FINAL RESULT: FAILED marker in runtime stdout")
 
     print("validation_ok")
     return 0

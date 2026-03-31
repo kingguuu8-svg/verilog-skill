@@ -11,6 +11,7 @@ from simulation_support import (
     classify_backend_failure,
     classify_run_failure,
     collect_wave_files,
+    detect_runtime_failure_markers,
     ensure_temp_dir,
     make_stage_result,
     normalize_inputs,
@@ -281,13 +282,19 @@ def main() -> int:
         print(json.dumps(payload, indent=2))
         return 1
 
-    if run_proc.returncode != 0:
+    failure_markers = detect_runtime_failure_markers(run_proc.stdout, run_proc.stderr)
+    if run_proc.returncode != 0 or failure_markers:
         status, category = classify_run_failure(run_proc.stdout, run_proc.stderr, run_proc.returncode)
+        runtime_message = "Simulation runtime failed"
+        interpretation = "the testbench executed but reported a runtime failure or exited non-zero"
+        if failure_markers and run_proc.returncode == 0:
+            runtime_message = "Simulation runtime reported failure markers"
+            interpretation = "the testbench completed but its own logs declared a failure condition"
         run_stage = make_stage_result(
             backend="vvp",
             status=status,
             category=category,
-            message="Simulation runtime failed",
+            message=runtime_message,
             command=run_command_args,
             stdout=run_proc.stdout,
             stderr=run_proc.stderr,
@@ -300,7 +307,7 @@ def main() -> int:
             run_stage=run_stage,
             status=status,
             message="Simulation runtime failed after compile/elaboration passed",
-            interpretation="the testbench executed but reported a runtime failure or exited non-zero",
+            interpretation=interpretation,
             artifacts=artifacts,
         )
         print(json.dumps(payload, indent=2))

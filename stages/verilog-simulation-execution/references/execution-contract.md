@@ -74,6 +74,17 @@ Artifacts should include at minimum:
 - run log path
 - wave file paths that were actually emitted
 
+Runtime classification should not rely only on process exit status.
+
+If the simulator exits zero but the testbench prints explicit failure markers such as:
+
+- `SIM_FAIL`
+- `[FAIL]`
+- `FINAL RESULT: FAILED`
+- runtime `ERROR:` lines
+
+the stage should still classify the run as `run_error`.
+
 ## Status Model
 
 Normalize outcomes into:
@@ -108,3 +119,4 @@ The current stage should validate at least:
 - a passing simulation that prints a success marker
 - a passing simulation that emits a wave file
 - a runtime failure path that is classified separately from compile failure
+- a runtime failure path where the simulator exits zero but the testbench logs explicit failure markers

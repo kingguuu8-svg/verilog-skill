@@ -78,3 +78,16 @@ The runner returns JSON with:
 - `artifacts.wave_files`
 
 Use these fields directly instead of scraping plain text logs when integrating this stage into later skills.
+
+## Runtime Failure Detection
+
+The runner does not trust process exit status alone.
+
+If runtime output contains explicit failure markers such as:
+
+- `SIM_FAIL`
+- `[FAIL]`
+- `FINAL RESULT: FAILED`
+- `ERROR:`
+
+the run is classified as `run_error` even when `vvp` exits with code `0`.

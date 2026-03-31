@@ -27,6 +27,13 @@ from probe_backend import probe_backend  # noqa: E402
 
 TMP_ROOT = REPO_ROOT / ".tmp" / "verilog-simulation-execution"
 WAVE_SUFFIXES = {".vcd", ".fst", ".lxt", ".lxt2", ".vpd"}
+RUNTIME_FAILURE_MARKERS = (
+    "sim_fail",
+    "[fail]",
+    "final result: failed",
+    "test failed",
+    "tests failed",
+)
 
 
 def ensure_temp_dir() -> str:
@@ -166,9 +173,25 @@ def classify_run_failure(proc_stdout: str, proc_stderr: str, returncode: int) ->
         return "unsupported_feature", "unsupported_feature"
     if returncode != 0:
         return "run_error", "simulation_failed"
-    if "sim_fail" in lowered:
-        return "run_error", "simulation_failed"
+    if detect_runtime_failure_markers(proc_stdout, proc_stderr):
+        return "run_error", "testbench_failure"
     return "run_error", "simulation_failed"
+
+
+def detect_runtime_failure_markers(proc_stdout: str, proc_stderr: str) -> list[str]:
+    matches: list[str] = []
+    for raw_line in "\n".join(part for part in [proc_stdout, proc_stderr] if part).splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if not lowered:
+            continue
+        if any(marker in lowered for marker in RUNTIME_FAILURE_MARKERS):
+            matches.append(line)
+            continue
+        if lowered.startswith("error:"):
+            matches.append(line)
+            continue
+    return matches
 
 
 def run_command_in_dir(command: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
