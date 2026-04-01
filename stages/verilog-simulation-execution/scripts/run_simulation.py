@@ -25,6 +25,7 @@ from simulation_support import (
     filter_hdl_locations,
     make_stage_result,
     normalize_inputs,
+    normalize_xsim_runtime_result,
     parse_locations,
     probe_backend,
     probe_vvp_backend,
@@ -32,6 +33,8 @@ from simulation_support import (
     resolve_vivado_xpm_sources,
     run_command_in_dir,
     simulation_support_range,
+    snapshot_xsim_runtime_pids,
+    wait_for_xsim_runtime_completion,
 )
 from tb_event_support import build_tb_event_index
 
@@ -687,12 +690,20 @@ def run_xsim_backend(
     )
 
     run_command = build_xsim_run_command(xsim_info, snapshot_name, args.runtime_arg, wave_file, run_log)
+    existing_xsim_pids = snapshot_xsim_runtime_pids()
     run_proc = run_command_in_dir(run_command, env, output_dir)
+    wait_for_xsim_runtime_completion(existing_xsim_pids, compiled_image, run_log)
     ensure_backend_log(run_log, run_proc.stdout, run_proc.stderr)
+    run_stdout, run_stderr, run_returncode = normalize_xsim_runtime_result(
+        run_proc.returncode,
+        run_proc.stdout,
+        run_proc.stderr,
+        run_log,
+    )
 
     artifacts["wave_files"] = collect_wave_files(output_dir, wave_file)
     enrich_wave_indexes(artifacts, args.wave_index)
-    enrich_tb_event_index(artifacts, run_proc.stdout, run_proc.stderr)
+    enrich_tb_event_index(artifacts, run_stdout, run_stderr)
     if wave_file is not None and not wave_file.exists():
         return handle_requested_wave_missing(
             args=args,
@@ -700,8 +711,8 @@ def run_xsim_backend(
             artifacts=artifacts,
             compile_stage=compile_stage,
             run_command=run_command,
-            run_stdout=run_proc.stdout,
-            run_stderr=run_proc.stderr,
+            run_stdout=run_stdout,
+            run_stderr=run_stderr,
             backend_name="xsim",
         )
 
@@ -711,9 +722,9 @@ def run_xsim_backend(
         artifacts=artifacts,
         compile_stage=compile_stage,
         run_command=run_command,
-        run_stdout=run_proc.stdout,
-        run_stderr=run_proc.stderr,
-        run_returncode=run_proc.returncode,
+        run_stdout=run_stdout,
+        run_stderr=run_stderr,
+        run_returncode=run_returncode,
         backend_name="xsim",
     )
 

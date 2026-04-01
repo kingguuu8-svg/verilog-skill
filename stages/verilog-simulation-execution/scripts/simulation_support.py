@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -57,6 +59,9 @@ XPM_SOURCE_RELATIVE_PATHS = (
 XPM_TOKEN_RE = re.compile(r"\bxpm_[a-zA-Z0-9_]+\b")
 HDL_LOCATION_SUFFIXES = {".v", ".vh", ".sv", ".svh", ".f"}
 WAVE_SCAN_SKIP_DIRS = {".Xil", "xsim.dir", "__pycache__"}
+WINDOWS_XSIM_PROCESS_NAMES = ("xsim.exe", "xsimk.exe")
+XSIM_EXIT_RE = re.compile(r"^exit\s+(-?\d+)\s*$", re.IGNORECASE)
+RUNTIME_FAILURE_LINE_RE = re.compile(r"^(?:\[[^\]]+\]\s*)?(?:error|fail|fatal):", re.IGNORECASE)
 
 
 def ensure_temp_dir() -> str:
@@ -497,16 +502,126 @@ def detect_runtime_failure_markers(proc_stdout: str, proc_stderr: str) -> list[s
         if any(marker in lowered for marker in RUNTIME_FAILURE_MARKERS):
             matches.append(line)
             continue
-        if lowered.startswith("error:"):
-            matches.append(line)
-            continue
-        if " error:" in lowered:
-            matches.append(line)
-            continue
-        if lowered.startswith("fail:") or " fail:" in lowered:
+        if RUNTIME_FAILURE_LINE_RE.match(line):
             matches.append(line)
             continue
     return matches
+
+
+def list_windows_processes_by_name(names: tuple[str, ...]) -> list[dict]:
+    if os.name != "nt":
+        return []
+
+    quoted_names = ", ".join(f"'{name}'" for name in names)
+    script = (
+        "$ErrorActionPreference='SilentlyContinue'; "
+        f"$names=@({quoted_names}); "
+        "$procs=Get-CimInstance Win32_Process | "
+        "Where-Object { $names -contains $_.Name } | "
+        "Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine; "
+        "if ($null -eq $procs) { '[]' } else { $procs | ConvertTo-Json -Compress }"
+    )
+    proc = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+
+    text = proc.stdout.strip()
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def snapshot_xsim_runtime_pids() -> set[int]:
+    return {
+        int(process.get("ProcessId", 0))
+        for process in list_windows_processes_by_name(WINDOWS_XSIM_PROCESS_NAMES)
+        if int(process.get("ProcessId", 0)) > 0
+    }
+
+
+def matches_xsim_runtime_process(process: dict, compiled_image: Path, run_log: Path) -> bool:
+    executable_path = str(process.get("ExecutablePath") or "").replace("/", "\\").lower()
+    command_line = str(process.get("CommandLine") or "").replace("/", "\\").lower()
+    compiled_image_text = str(compiled_image.resolve()).replace("/", "\\").lower()
+    run_log_text = str(run_log.resolve()).replace("/", "\\").lower()
+
+    if executable_path == compiled_image_text:
+        return True
+    if compiled_image_text and compiled_image_text in command_line:
+        return True
+    if run_log_text and run_log_text in command_line:
+        return True
+    return False
+
+
+def wait_for_xsim_runtime_completion(
+    existing_pids: set[int],
+    compiled_image: Path,
+    run_log: Path,
+    poll_seconds: float = 1.0,
+    detection_window_seconds: float = 10.0,
+) -> None:
+    if os.name != "nt":
+        return
+
+    deadline = time.monotonic() + detection_window_seconds
+    seen_runtime_process = False
+    while True:
+        tracked_processes: list[dict] = []
+        for process in list_windows_processes_by_name(WINDOWS_XSIM_PROCESS_NAMES):
+            process_id = int(process.get("ProcessId", 0))
+            if process_id <= 0 or process_id in existing_pids:
+                continue
+            if matches_xsim_runtime_process(process, compiled_image, run_log):
+                tracked_processes.append(process)
+
+        if tracked_processes:
+            seen_runtime_process = True
+        elif seen_runtime_process or time.monotonic() >= deadline:
+            return
+
+        time.sleep(poll_seconds)
+
+
+def extract_xsim_exit_code(runtime_text: str) -> int | None:
+    exit_code: int | None = None
+    for raw_line in runtime_text.splitlines():
+        match = XSIM_EXIT_RE.match(raw_line.strip())
+        if match is None:
+            continue
+        exit_code = int(match.group(1))
+    return exit_code
+
+
+def normalize_xsim_runtime_result(
+    wrapper_returncode: int,
+    wrapper_stdout: str,
+    wrapper_stderr: str,
+    run_log: Path,
+) -> tuple[str, str, int]:
+    runtime_stdout = wrapper_stdout
+    if run_log.exists():
+        runtime_stdout = run_log.read_text(encoding="utf-8", errors="ignore")
+
+    exit_code = extract_xsim_exit_code(runtime_stdout)
+    if exit_code is not None:
+        return runtime_stdout, wrapper_stderr, exit_code
+    return runtime_stdout, wrapper_stderr, wrapper_returncode
 
 
 def run_command_in_dir(command: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
